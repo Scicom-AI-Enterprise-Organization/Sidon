@@ -209,6 +209,6 @@ __marimo__/
 outputs/
 *.sh.o*
 runs/
-sidon/
 wandb/
 notebooks/
+*.ckpt
