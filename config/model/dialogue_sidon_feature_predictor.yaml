@@ -5,5 +5,5 @@ lightning_module:
 cfg:
   ssl_model_name: facebook/w2v-bert-2.0
   optim:
-    lr: 2e-5
+    lr: 1e-5
     weight_decay: 0.01

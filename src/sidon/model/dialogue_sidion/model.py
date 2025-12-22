@@ -2,6 +2,41 @@ import torch
 import torch.nn as nn
 from transformers import Wav2Vec2BertModel
 
+
+class FiLM(nn.Module):
+    """
+    FiLM layer: Feature-wise Linear Modulation
+
+    x:    (B, C, ...)   – features to modulate
+    cond: (B, D)        – conditioning vector
+
+    Applies: y = gamma(cond) * x + beta(cond),
+    where gamma, beta are per-channel.
+    """
+    def __init__(self, in_channels: int, cond_dim: int):
+        super().__init__()
+        # One linear to predict both gamma and beta
+        self.film = nn.Linear(cond_dim, 2 * in_channels)
+
+    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        """
+        x:    (B, C, *spatial dims*)
+        cond: (B, cond_dim)
+        """
+        B, C = x.size(0), x.size(1)
+
+        # (B, 2C)
+        gamma_beta = self.film(cond)
+        gamma, beta = gamma_beta.chunk(2, dim=-1)  # each (B, C)
+
+        # reshape to broadcast over spatial dims
+        # -> (B, C, 1, 1, ..., 1)
+        broadcast_shape = [B, C] + [1] * (x.dim() - 2)
+        gamma = gamma.view(broadcast_shape)
+        beta = beta.view(broadcast_shape)
+
+        return gamma * x + beta
+
 # --- adapter block (same as before) ---
 class CondAdapter(nn.Module):
     def __init__(self, d_model: int, d_hidden: int, d_cond: int):

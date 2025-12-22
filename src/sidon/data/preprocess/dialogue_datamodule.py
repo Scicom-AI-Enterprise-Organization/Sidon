@@ -8,7 +8,7 @@ from sidon.data.preprocess.webdataset_datamodule import (
 import torch
 import webdataset as wds
 from functools import partial
-from ..datamodule import random_crop, torch_audio, PreprocessedDataModule
+from ..datamodule import random_crop, torch_audio, PreprocessedDataModule, skip_nan_preprocessed
 from .functional_degrations import (
     add_non_parametric_noise,
     band_limit,
@@ -21,6 +21,31 @@ from .functional_degrations import (
 )
 from typing import Any
 import random
+import silero_vad
+import torchaudio
+
+def select_by_vad(samples, input_key=None,sr=24000):
+    model = silero_vad.load_silero_vad(onnx=True)
+
+    for sample in samples:
+        wav = sample[input_key]
+        wav = wav[0]
+        vad_flag = True
+        if sr != 16000:
+            wav = torchaudio.functional.resample(wav,sr,16000)
+        for i in range(wav.shape[0]):
+            speech_timestamps = silero_vad.get_speech_timestamps(
+                wav[i],
+                model,
+                return_seconds=True
+            )
+            if len(speech_timestamps) == 0:
+                vad_flag=False
+        if vad_flag:
+            yield sample
+                
+
+
 
 def chunk_crop(samples, input_key=None, chunk_seconds: int = 30):
     """Yield fixed-size chunks from each sample's audio.
@@ -319,7 +344,50 @@ class PreprocessedDialogueDataModule(PreprocessedDataModule):
     src/sidon/preprocess.py. This collate stacks channel-preserving waveforms
     and reassembles multiple SSL feature groups (per-speaker and mixtures).
     """
+    @property
+    def get_shuffle_buffer_size(self):
+        return 100
 
+    def setup(self, stage: str | None = None) -> None:
+        self.train_dataset = (
+            wds.WebDataset(
+                self.train_urls,
+                shardshuffle=True,
+                nodesplitter=lambda x: x,
+                workersplitter=wds.split_by_worker,
+                repeat=True,
+                empty_check=True,
+                handler=wds.warn_and_continue,
+            )
+            .decode(
+                wds.autodecode.basichandlers,
+                torch_audio,
+                handler=wds.warn_and_continue,
+            )
+            .compose(skip_nan_preprocessed)
+            .compose(partial(select_by_vad,input_key='input_wav.pth'))
+            .shuffle(self.get_shuffle_buffer_size)
+            .batched(self.batch_size, collation_fn=self.collate_fn)
+        )
+        self.val_dataset = (
+            wds.WebDataset(
+                self.val_urls,
+                shardshuffle=True,
+                nodesplitter=lambda x: x,
+                workersplitter=wds.split_by_worker,
+                repeat=True,
+                empty_check=True,
+                handler=wds.warn_and_continue,
+            )
+            .decode(
+                wds.autodecode.basichandlers,
+                torch_audio,
+                handler=wds.warn_and_continue,
+            )
+            .compose(skip_nan_preprocessed)
+            .compose(partial(select_by_vad,input_key='input_wav.pth'))
+            .batched(self.val_batch_size, collation_fn=self.collate_fn)
+        )
     def collate_fn(
         self,
         samples: list[dict[str, Any]],
@@ -392,19 +460,6 @@ class PreprocessedDialogueDataModule(PreprocessedDataModule):
             dtype=torch.long,
         )
 
-        # SSL BatchEncodings (pickled dicts of tensors)
-        clean_ssl_inputs_0 = _cat_batchenc(
-            [s["clean_ssl_inputs_0.pickle"] for s in samples if "clean_ssl_inputs_0.pickle" in s]
-        )
-        clean_ssl_inputs_1 = _cat_batchenc(
-            [s["clean_ssl_inputs_1.pickle"] for s in samples if "clean_ssl_inputs_1.pickle" in s]
-        )
-        clean_mixture_ssl_inputs = _cat_batchenc(
-            [s["clean_mixture_ssl_inputs.pickle"] for s in samples if "clean_mixture_ssl_inputs.pickle" in s]
-        )
-        noisy_mixture_ssl_inputs = _cat_batchenc(
-            [s["noisy_mixture_ssl_inputs.pickle"] for s in samples if "noisy_mixture_ssl_inputs.pickle" in s]
-        )
 
         # Names and sampling rate
         names: list[str] = []
@@ -422,10 +477,6 @@ class PreprocessedDialogueDataModule(PreprocessedDataModule):
             "input_wav": input_wav.float(),
             "input_wav_lens": input_wav_lens,
             "sr": samples[0].get("sr.index", 48000),
-            "clean_ssl_inputs_0": clean_ssl_inputs_0,
-            "clean_ssl_inputs_1": clean_ssl_inputs_1,
-            "clean_mixture_ssl_inputs": clean_mixture_ssl_inputs,
-            "noisy_mixture_ssl_inputs": noisy_mixture_ssl_inputs,
             "names": names,
         }
 

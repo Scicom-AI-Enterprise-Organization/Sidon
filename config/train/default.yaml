@@ -18,7 +18,7 @@ trainer:
   precision: 32
   gradient_clip_val: 0.5
   gradient_clip_algorithm: "norm"
-  detect_anomaly: true
-
+  plugins:
+    _target_: sidon.util.ABCIEnvironment
 ckpt_path: null
 compile: false

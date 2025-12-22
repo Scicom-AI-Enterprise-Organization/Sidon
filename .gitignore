@@ -212,3 +212,4 @@ runs/
 wandb/
 notebooks/
 *.ckpt
+sidon_runs/

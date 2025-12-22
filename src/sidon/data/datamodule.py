@@ -1,14 +1,12 @@
 """Data module implementations for Sidon."""
 from __future__ import annotations
 
-import random
-
-
+import io
 import os
+import random
 import re
-import tempfile
 from pathlib import Path
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, Iterable, Sequence
 
 import torch
 import torchaudio
@@ -21,12 +19,9 @@ def torch_audio(key: str, data: bytes):
     extension = re.sub(r".*[.]", "", key)
     if extension not in {"flac", "mp3", "sox", "wav", "m4a", "ogg", "wma"}:
         return None
-
-    with tempfile.TemporaryDirectory() as dirname:
-        filename = os.path.join(dirname, f"file.{extension}")
-        with open(filename, "wb") as stream:
-            stream.write(data)
-        return torchaudio.load(filename, backend="soundfile")
+    buffer = io.BytesIO(data)
+    buffer.seek(0)
+    return torchaudio.load(buffer, backend="soundfile")
 
 
 def glob_wds(paths: Sequence[str] | str) -> list[str]:
@@ -80,6 +75,27 @@ def random_crop(samples, n_crops, seconds, input_key=None):
             yield new_sample
 
 
+def _contains_nan(value: Any) -> bool:
+    """Recursively inspect tensors nested in mappings/sequences for NaNs."""
+    if isinstance(value, torch.Tensor):
+        if value.is_floating_point() or torch.is_complex(value):
+            return torch.isnan(value).any().item()
+        return False
+    if isinstance(value, dict):
+        return any(_contains_nan(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_nan(v) for v in value)
+    return False
+
+
+def skip_nan_preprocessed(samples: Iterable[Dict[str, Any]]):
+    """Drop samples with NaNs in any tensor payload."""
+    for sample in samples:
+        if _contains_nan(sample):
+            continue
+        yield sample
+
+
 class PreprocessedDataModule(LightningDataModule):
     """Loads preprocessed torch tensors packaged as WebDataset shards."""
 
@@ -106,6 +122,9 @@ class PreprocessedDataModule(LightningDataModule):
         self.train_num_workers = train_num_workers
         self.val_num_workers = val_num_workers
         self.val_batch_size = val_batch_size
+    @property
+    def get_shuffle_buffer_size(self):
+        return 1000
 
     def setup(self, stage: str | None = None) -> None:
         self.train_dataset = (
@@ -123,7 +142,8 @@ class PreprocessedDataModule(LightningDataModule):
                 torch_audio,
                 handler=wds.warn_and_continue,
             )
-            .shuffle(1000)
+            .compose(skip_nan_preprocessed)
+            .shuffle(self.get_shuffle_buffer_size)
             .batched(self.batch_size, collation_fn=self.collate_fn)
         )
         self.val_dataset = (
@@ -141,6 +161,7 @@ class PreprocessedDataModule(LightningDataModule):
                 torch_audio,
                 handler=wds.warn_and_continue,
             )
+            .compose(skip_nan_preprocessed)
             .batched(self.val_batch_size, collation_fn=self.collate_fn)
         )
 
@@ -149,6 +170,8 @@ class PreprocessedDataModule(LightningDataModule):
             self.train_dataset,
             num_workers=self.train_num_workers,
             collate_fn=lambda batch: batch[0],
+            pin_memory=True,
+            persistent_workers=self.train_num_workers > 0,
             drop_last=True,
         )
 
@@ -157,6 +180,8 @@ class PreprocessedDataModule(LightningDataModule):
             self.val_dataset,
             num_workers=self.val_num_workers,
             collate_fn=lambda batch: batch[0],
+            pin_memory=True,
+            persistent_workers=self.val_num_workers > 0,
             drop_last=True,
         )
 

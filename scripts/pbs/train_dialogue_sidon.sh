@@ -1,7 +1,6 @@
 #!/bin/bash
-#PBS -q short-g
-#PBS -l select=1
-#PBS -l walltime=4:00:00
+#PBS -q regular-g
+#PBS -l select=16
 #PBS -W group_list=gj18
 #PBS -j oe
 #PBS -k oed
@@ -70,11 +69,11 @@ mpirun  \
      -np $num_procs -map-by ppr:$num_gpus:node -hostfile $PBS_NODEFILE \
     .venv/bin/python src/sidon/train.py \
   data=dialogue_preprocessed \
-  data.datamodule.batch_size=8 \
-  model=dialogue_sidon_feature_predictor \
+  data.datamodule.batch_size=4 \
+  model=dialogue_sidon \
   train=default \
-  train.trainer.gradient_clip_val=1.0 \
+  train.trainer.gradient_clip_val=null \
   train.trainer.precision=bf16-mixed \
   hydra.run.dir=./sidon_runs/${PBS_JOBID} \
   +train.trainer.num_nodes=$num_nodes +train.trainer.devices=$num_gpus \
-#  'train.ckpt_path="/work/gj18/e43001/github.com/Sidon/sidon/wvcbo1ox/checkpoints/epoch=1-step=247668.ckpt"'
+ 'train.ckpt_path="/work/gj18/e43001/github.com/Sidon/sidon/7bsqorip/checkpoints/epoch=0-step=300000.ckpt"'
