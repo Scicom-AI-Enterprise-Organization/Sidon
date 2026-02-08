@@ -365,7 +365,6 @@ class PreprocessedDialogueDataModule(PreprocessedDataModule):
                 handler=wds.warn_and_continue,
             )
             .compose(skip_nan_preprocessed)
-            .compose(partial(select_by_vad,input_key='input_wav.pth'))
             .shuffle(self.get_shuffle_buffer_size)
             .batched(self.batch_size, collation_fn=self.collate_fn)
         )
@@ -385,7 +384,6 @@ class PreprocessedDialogueDataModule(PreprocessedDataModule):
                 handler=wds.warn_and_continue,
             )
             .compose(skip_nan_preprocessed)
-            .compose(partial(select_by_vad,input_key='input_wav.pth'))
             .batched(self.val_batch_size, collation_fn=self.collate_fn)
         )
     def collate_fn(

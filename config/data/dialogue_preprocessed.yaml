@@ -3,11 +3,11 @@ datamodule:
   train_urls:
     # - /groups/gag51394/users/nakata/shards_test/dialogue_24k_normalize/valid/
     # - /work/gj18/e43001/datasets/dialogue_24k_normalize/train
-      - /work/gj18/e43001/datasets/train
+      - /home/qch10240fz/nakata/datasets/dialogue/train
   val_urls:
     # - /groups/gag51394/users/nakata/shards_test/dialogue_24k_normalize/valid/
     # - /work/gj18/e43001/datasets/dialogue_24k_normalize/valid
-      - /work/gj18/e43001/datasets/valid
+      - /home/qch10240fz/nakata/datasets/dialogue/valid
   batch_size: 2
   val_batch_size: 2
   train_num_workers: 16

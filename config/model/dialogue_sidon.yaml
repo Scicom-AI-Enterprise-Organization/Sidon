@@ -3,8 +3,9 @@ lightning_module:
   _recursive_: false
 
 cfg:
-  feature_predictor_checkpoint_path: /work/gj18/e43001/github.com/Sidon/sidon/40bq0fx3/checkpoints/epoch=0-step=260000.ckpt
   sample_rate: 24000
+  ssl_model_name: facebook/w2v-bert-2.0
+  vae_checkpoint_path: /home/qch10240fz/nakata/github.com/Sidon/sidon/jhqmq4u3/checkpoints/epoch=0-step=510000.ckpt
 
   dac_loss:
     stft_loss:

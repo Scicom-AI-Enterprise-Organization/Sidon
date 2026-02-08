@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Tuple
+import math
 
 import audiotools
 import random
@@ -15,11 +16,13 @@ import itertools
 from lightning import LightningModule
 import torchaudio
 import torch.nn as nn
+from diffusers import DDPMScheduler, DPMSolverMultistepScheduler
 from lightning.pytorch import loggers
 from huggingface_hub import hf_hub_download
 from omegaconf import DictConfig
 from peft import LoraConfig, inject_adapter_in_model
 from torchmetrics.audio import PermutationInvariantTraining
+from peft import get_peft_model,LoraConfig
 from .model import add_cond_adapters_all_layers, FiLM 
 from .audio import extract_seamless_m4t_features
 from typing import Optional, Union
@@ -137,6 +140,174 @@ class Wav2VecBertWithConditioning(transformers.Wav2Vec2BertModel):
             hidden_states=encoder_outputs.hidden_states,
             attentions=encoder_outputs.attentions,
         )
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine: bool = True):
+        super().__init__()
+        self.dim = dim
+        self.eps = eps
+        self.elementwise_affine = elementwise_affine
+        if self.elementwise_affine:
+            self.weight = nn.Parameter(torch.ones(dim))
+        else:
+            self.register_parameter("weight", None)
+
+    def _norm(self, x: torch.Tensor) -> torch.Tensor:
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        output = self._norm(x.float()).type_as(x)
+        if self.weight is not None:
+            output = output * self.weight
+        return output
+
+
+def _modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    return x * (1 + scale) + shift
+
+
+class TimestepEmbedder(nn.Module):
+    def __init__(self, hidden_size: int, frequency_embedding_size: int = 256):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(frequency_embedding_size, hidden_size, bias=False),
+            transformers.activations.ACT2FN["silu"],
+            nn.Linear(hidden_size, hidden_size, bias=False),
+        )
+        self.frequency_embedding_size = frequency_embedding_size
+
+    @staticmethod
+    def timestep_embedding(t: torch.Tensor, dim: int, max_period: int = 10000) -> torch.Tensor:
+        half = dim // 2
+        freqs = torch.exp(
+            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+        ).to(t.device)
+        args = t[:, None].float() * freqs[None]
+        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        if dim % 2:
+            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+        return embedding.to(t.dtype)
+
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        t = t.float()
+        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        t_emb = self.mlp(t_freq)
+        return t_emb
+
+
+class FeedForwardNetwork(nn.Module):
+    def __init__(self, embed_dim: int, ffn_dim: int):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.gate_proj = nn.Linear(self.embed_dim, ffn_dim, bias=False)
+        self.up_proj = nn.Linear(self.embed_dim, ffn_dim, bias=False)
+        self.down_proj = nn.Linear(ffn_dim, self.embed_dim, bias=False)
+        self.act_fn = transformers.activations.ACT2FN["silu"]
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        gate = self.gate_proj(x)
+        up = self.up_proj(x)
+        gate = self.act_fn(gate)
+        return self.down_proj(gate * up)
+
+
+class HeadLayer(nn.Module):
+    def __init__(
+        self,
+        embed_dim: int,
+        ffn_dim: int,
+        cond_dim: int,
+        norm_eps: float = 1e-5,
+    ):
+        super().__init__()
+        self.ffn = FeedForwardNetwork(embed_dim, ffn_dim)
+        self.norm = RMSNorm(embed_dim, eps=norm_eps)
+        self.adaLN_modulation = nn.Sequential(
+            transformers.activations.ACT2FN["silu"],
+            nn.Linear(cond_dim, 3 * embed_dim, bias=False),
+        )
+
+    def forward(self, x: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        shift_ffn, scale_ffn, gate_ffn = self.adaLN_modulation(c).chunk(3, dim=-1)
+        x = x + gate_ffn * self.ffn(_modulate(self.norm(x), shift_ffn, scale_ffn))
+        return x
+
+
+class FinalLayer(nn.Module):
+    def __init__(self, hidden_size: int, output_size: int, cond_size: int, norm_eps: float = 1e-5):
+        super().__init__()
+        self.norm_final = RMSNorm(hidden_size, eps=norm_eps, elementwise_affine=False)
+        self.linear = nn.Linear(hidden_size, output_size, bias=False)
+        self.adaLN_modulation = nn.Sequential(
+            transformers.activations.ACT2FN["silu"],
+            nn.Linear(cond_size, 2 * hidden_size, bias=False),
+        )
+
+    def forward(self, x: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        shift, scale = self.adaLN_modulation(c).chunk(2, dim=-1)
+        x = _modulate(self.norm_final(x), shift, scale)
+        x = self.linear(x)
+        return x
+
+
+class VibeVoiceDiffusionHead(nn.Module):
+    def __init__(
+        self,
+        latent_size: int,
+        hidden_size: int,
+        cond_size: int,
+        head_layers: int = 6,
+        head_ffn_ratio: float = 4.0,
+        rms_norm_eps: float = 1e-5,
+    ):
+        super().__init__()
+        self.cond_dim = hidden_size
+        self.noisy_images_proj = nn.Linear(latent_size, hidden_size, bias=False)
+        self.cond_proj = nn.Linear(cond_size, self.cond_dim, bias=False)
+        self.t_embedder = TimestepEmbedder(self.cond_dim)
+        ffn_dim = int(hidden_size * head_ffn_ratio)
+        self.layers = nn.ModuleList(
+            [
+                HeadLayer(
+                    embed_dim=hidden_size,
+                    ffn_dim=ffn_dim,
+                    cond_dim=self.cond_dim,
+                    norm_eps=rms_norm_eps,
+                )
+                for _ in range(head_layers)
+            ]
+        )
+        self.final_layer = FinalLayer(
+            hidden_size=hidden_size,
+            output_size=latent_size,
+            cond_size=self.cond_dim,
+            norm_eps=rms_norm_eps,
+        )
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+        for layer in self.layers:
+            nn.init.constant_(layer.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer.linear.weight, 0)
+
+    def forward(
+        self,
+        noisy_images: torch.Tensor,
+        timesteps: torch.Tensor,
+        condition: torch.Tensor,
+    ) -> torch.Tensor:
+        x = self.noisy_images_proj(noisy_images)
+        t = self.t_embedder(timesteps)
+        condition = self.cond_proj(condition)
+        c = condition + t
+        for layer in self.layers:
+            x = layer(x, c)
+        x = self.final_layer(x, c)
+        return x
 
 
 class DialogueFeaturePredictorLightningModule(LightningModule):
@@ -328,153 +499,6 @@ class DialogueFeaturePredictorLightningModule(LightningModule):
                 )
 
 
-class DialogueFeaturePredictorWithTransformerDiscriminatorLightningModule(
-    DialogueFeaturePredictorLightningModule
-):
-    """Adversarial feature predictor that adds a transformer discriminator."""
-
-    def __init__(self, cfg: DictConfig) -> None:
-        super().__init__(cfg)
-        disc_cfg = cfg.get("discriminator", {})
-        hidden_size = int(disc_cfg.get("hidden_size", self.student_ssl_model.config.hidden_size))
-        self.feature_discriminator = TransformerFeatureDiscriminator(
-            hidden_size=hidden_size,
-            num_layers=int(disc_cfg.get("num_layers", 2)),
-            num_heads=int(disc_cfg.get("num_heads", 8)),
-            ff_mult=float(disc_cfg.get("ff_mult", 4.0)),
-            dropout=float(disc_cfg.get("dropout", 0.1)),
-        )
-        self.adv_weight = float(disc_cfg.get("adv_weight", 0.1))
-        self.adv_criterion = torch.nn.BCEWithLogitsLoss()
-        self.automatic_optimization = False
-
-    def _flatten_for_discriminator(
-        self, predicted: torch.Tensor, target: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        predicted_flat = predicted.permute(1, 0, 2, 3).reshape(
-            -1, predicted.shape[2], predicted.shape[3]
-        )
-        target_flat = target.permute(1, 0, 2, 3).reshape(
-            -1, target.shape[2], target.shape[3]
-        )
-        return predicted_flat, target_flat, None
-
-    def training_step(self, batch, batch_idx):
-        opt_g, opt_d = self.optimizers()
-        ssl_loss, predicted_features, target_features = self.step(
-            batch, batch_idx, stage="train"
-        )
-        predicted_flat, target_flat, attn_mask = self._flatten_for_discriminator(
-            predicted_features, target_features
-        )
-
-        self.toggle_optimizer(opt_d)
-        opt_d.zero_grad()
-        real_logits = self.feature_discriminator(
-            target_flat.detach(), attention_mask=attn_mask
-        )
-        fake_logits = self.feature_discriminator(
-            predicted_flat.detach(), attention_mask=attn_mask
-        )
-        real_labels = torch.ones_like(real_logits)
-        fake_labels = torch.zeros_like(fake_logits)
-        discriminator_loss = 0.5 * (
-            self.adv_criterion(real_logits, real_labels)
-            + self.adv_criterion(fake_logits, fake_labels)
-        )
-        self.manual_backward(discriminator_loss)
-        torch.nn.utils.clip_grad_norm_(self.feature_discriminator.parameters(), 1.0)
-        opt_d.step()
-        self.untoggle_optimizer(opt_d)
-
-        self.toggle_optimizer(opt_g)
-        opt_g.zero_grad()
-        adv_logits = self.feature_discriminator(
-            predicted_flat, attention_mask=attn_mask
-        )
-        adv_labels = torch.ones_like(adv_logits)
-        adv_loss = self.adv_criterion(adv_logits, adv_labels)
-        total_loss = ssl_loss + self.adv_weight * adv_loss
-        self.manual_backward(total_loss)
-        torch.nn.utils.clip_grad_norm_(self.student_ssl_model.parameters(), 1.0)
-        opt_g.step()
-        self.untoggle_optimizer(opt_g)
-
-        self.log("train/ssl_loss", ssl_loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log(
-            "train/adv_loss",
-            adv_loss,
-            on_step=True,
-            on_epoch=True,
-            prog_bar=False,
-        )
-        self.log(
-            "train/discriminator_loss",
-            discriminator_loss,
-            on_step=True,
-            on_epoch=True,
-        )
-        self.log("train/total_loss", total_loss, on_step=True, on_epoch=True)
-        return total_loss
-
-    def validation_step(self, batch, batch_idx):
-        ssl_loss, predicted_features, target_features = self.step(
-            batch, batch_idx, stage="val"
-        )
-        predicted_flat, target_flat, attn_mask = self._flatten_for_discriminator(
-            predicted_features, target_features
-        )
-        with torch.inference_mode():
-            adv_logits = self.feature_discriminator(
-                predicted_flat, attention_mask=attn_mask
-            )
-            adv_loss = self.adv_criterion(
-                adv_logits, torch.ones_like(adv_logits)
-            ).detach()
-        self.log("val/ssl_loss", ssl_loss, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/adv_loss", adv_loss, on_step=False, on_epoch=True, sync_dist=True)
-
-        if self.global_rank == 0 and batch_idx < 10:
-            vocoder_path = hf_hub_download("sarulab-speech/sidon-v0.1", filename="decoder_cuda.pt")
-            vocoder = torch.jit.load(vocoder_path,map_location='cuda').to('cuda')
-            n_channels = predicted_features.shape[0]
-            predicted_wav = vocoder(predicted_features[:,0].transpose(1,2)).view(n_channels,-1)[:,:-960]
-            target_wav = vocoder(target_features[:,0].transpose(1,2)).view(n_channels,-1)[:,:-960]
-            self.log_audio(
-                predicted_wav,
-                f'Predicted dialogue {batch_idx}',
-                48000
-            )
-            self.log_audio(
-                target_wav,
-                f'Resynthesized dialogue {batch_idx}',
-                48000
-            )
-            self.log_audio(
-                batch['input_wav'][0],
-                f'Ground truth dialogue {batch_idx}',
-                24000
-            )
-            self.log_audio(
-                batch['noisy_mixture'][0],
-                f'Input noisy mixture {batch_idx}',
-                24000
-            )
-        return ssl_loss
-
-    def configure_optimizers(self):  # type: ignore
-        generator_opt = torch.optim.AdamW(
-            self.student_ssl_model.parameters(),
-            lr=self.cfg.optim.lr,
-            weight_decay=self.cfg.optim.weight_decay,
-        )
-        discriminator_opt = torch.optim.AdamW(
-            self.feature_discriminator.parameters(),
-            lr=self.cfg.optim.lr,
-            weight_decay=self.cfg.optim.weight_decay,
-        )
-        return [generator_opt, discriminator_opt]
-
 
 class DialogueSidonLightningModule(LightningModule):
     """Sidon decoder/discriminator training using a frozen SSL encoder."""
@@ -483,11 +507,26 @@ class DialogueSidonLightningModule(LightningModule):
         super().__init__()
         self.cfg = cfg
         self.save_hyperparameters()
-        self.feature_predictor = DialogueFeaturePredictorLightningModule.load_from_checkpoint(
-            cfg.feature_predictor_checkpoint_path,
+        self.student_ssl_model = Wav2VecBertWithConditioning.from_pretrained(
+            cfg.ssl_model_name, num_hidden_layers=16, layerdrop=0.0
+        ).train()
+        self.student_ssl_model.setup_conditioning_layer(256,2)
+        self.vae = SSLVAE.load_from_checkpoint(
+            cfg.vae_checkpoint_path
         ).eval()
+        # remove deocoder in vae
+        self.vae.decoder = None
+        self.output_linear = torch.nn.Linear(self.student_ssl_model.config.hidden_size,
+                                             self.vae.bottleneck.cfg.latent_dim)
+        for param in self.student_ssl_model.parameters():
+            param.requires_grad = True
+
+        self.ssl_model_criterion = torch.nn.MSELoss()
+        for param in self.vae.parameters():
+            param.requires_grad = False
+        self.pit = PermutationInvariantTraining(self.ssl_model_criterion,'speaker-wise','min')
         self.decoder = dac.model.dac.Decoder(
-            input_channel=(self.feature_predictor.student_ssl_model.config.hidden_size*2),  # type: ignore # 2 channels 
+            input_channel=(self.vae.bottleneck.cfg.latent_dim*2),  # type: ignore # 2 channels 
             channels=1536,
             rates=[8, 5, 4, 3],
             d_out=2,
@@ -498,57 +537,9 @@ class DialogueSidonLightningModule(LightningModule):
         self.regression_loss = DACLoss(cfg.dac_loss)
 
         self.automatic_optimization = False
-        voice_cfg = cfg.get("voice_activity", {})
-
-        def _voice_cfg_get(key: str, default):
-            if isinstance(voice_cfg, DictConfig):
-                return voice_cfg.get(key, default)
-            if isinstance(voice_cfg, dict):
-                return voice_cfg.get(key, default)
-            return getattr(voice_cfg, key, default) if hasattr(voice_cfg, key) else default
-
-        self.voice_energy_threshold: float = float(_voice_cfg_get("energy_threshold", 3e-3))
-        self.voice_window_ms: float = float(_voice_cfg_get("window_ms", 30.0))
-        self.voice_context_ms: float = float(_voice_cfg_get("context_ms", 120.0))
-        self.silence_weight: float = float(_voice_cfg_get("silence_weight", 0.1))
-
     def on_fit_start(self) -> None:
         torch.set_float32_matmul_precision("medium")
 
-    def _compute_voice_mask(self, wav: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return loss weights emphasizing voiced regions."""
-        sr = self.cfg.sample_rate
-        def _normalize_kernel(size_ms: float) -> int:
-            size = max(int(size_ms * sr / 1000.0), 1)
-            size = min(size, wav.shape[-1])
-            if size % 2 == 0 and size > 1:
-                size -= 1
-            return max(size, 1)
-
-        window_samples = _normalize_kernel(self.voice_window_ms)
-        padding = window_samples // 2
-        avg_power = F.avg_pool1d(
-            wav.pow(2),
-            kernel_size=window_samples,
-            stride=1,
-            padding=padding,
-        )
-        rms = torch.sqrt(avg_power + 1e-8)
-        base_mask = (rms >= self.voice_energy_threshold).float()
-        if self.voice_context_ms > 0:
-            context_samples = _normalize_kernel(self.voice_context_ms)
-            context_pad = context_samples // 2
-            base_mask = F.max_pool1d(
-                base_mask,
-                kernel_size=context_samples,
-                stride=1,
-                padding=context_pad,
-            )
-            base_mask = (base_mask > 0).float()
-        weight_mask = base_mask
-        if self.silence_weight > 0:
-            weight_mask = weight_mask + (1.0 - weight_mask) * self.silence_weight
-        return weight_mask.to(wav.dtype), base_mask.mean()
 
     def _align_predicted_speakers(
         self,
@@ -582,16 +573,88 @@ class DialogueSidonLightningModule(LightningModule):
             on_epoch=True,
         )
         return aligned
+    def feature_predictor_step(self, batch, batch_idx: int, stage: str = "train",log:bool=False) -> tuple[torch.Tensor,torch.Tensor,torch.Tensor]:
+        noisy_16k_mixture = batch["noisy_16k_mixture"]
+        clean_input_wavs = batch["input_wav"]
+        with torch.inference_mode():
+            clean_input_wavs = torchaudio.functional.resample(clean_input_wavs,batch['sr'], 16_000)
+            clean_ssl_inputs_0 = extract_seamless_m4t_features(
+                [torch.nn.functional.pad(0.9 * clean_input_wav[0].view(-1) / clean_input_wav[0].abs().max(),(160,160)) for clean_input_wav in clean_input_wavs],
+                device=str(self.device)
+            )
+            clean_ssl_inputs_1 = extract_seamless_m4t_features(
+                [torch.nn.functional.pad(0.9 * clean_input_wav[1].view(-1) / clean_input_wav[1].abs().max(),(160,160)) for clean_input_wav in clean_input_wavs],
+                device=str(self.device)
+            )
+            noisy_ssl_inputs = extract_seamless_m4t_features(
+                [torch.nn.functional.pad(0.9 * noisy.view(-1) / noisy.abs().max(),(160,160)) for noisy in noisy_16k_mixture],
+                device=str(self.device)
+            )
+        clean_inputs = [clean_ssl_inputs_0, clean_ssl_inputs_1]
+        n_speakers = len(clean_inputs)
+        batch_size = clean_ssl_inputs_0["input_features"].shape[0]
+
+        def _concat_batchenc(enc_list: list[dict[str, torch.Tensor]]):
+            out: dict[str, torch.Tensor] = {}
+            for key, value in enc_list[0].items():
+                if isinstance(value, torch.Tensor):
+                    out[key] = torch.cat([enc[key] for enc in enc_list], dim=0)
+                elif value is None:
+                    out[key] = None
+                else:
+                    out[key] = value
+            return out
+
+        def _repeat_batchenc(enc: dict[str, torch.Tensor], repeats: int):
+            out: dict[str, torch.Tensor] = {}
+            for key, value in enc.items():
+                if isinstance(value, torch.Tensor):
+                    out[key] = torch.cat([value] * repeats, dim=0)
+                elif value is None:
+                    out[key] = None
+                else:
+                    out[key] = value
+            return out
+
+        teacher_batch = _concat_batchenc(clean_inputs)
+        with torch.inference_mode():
+            teacher_features,_,_,_ = self.vae.encode(teacher_batch)
+
+        conditioning = (
+            torch.arange(n_speakers, device=self.device)
+            .unsqueeze(1)
+            .expand(-1, batch_size)
+            .reshape(-1)
+        )
+        noisy_batch = _repeat_batchenc(noisy_ssl_inputs, n_speakers)
+        student_features = self.student_ssl_model(
+            **noisy_batch, conditioning=conditioning
+        ).last_hidden_state
+        student_features = self.output_linear(student_features)
+
+        p = student_features.view(n_speakers, batch_size, *student_features.shape[1:]).float()
+        t = teacher_features.view(n_speakers, batch_size, *teacher_features.shape[1:]).float()
+        ssl_loss = self.pit(p.transpose(0,1),t.transpose(0,1).clone())
+        
+        if log:
+            self.log(
+                f"{stage}/ssl_loss",
+                ssl_loss,
+                on_step=stage == "train",
+                on_epoch=stage == "val",
+                sync_dist=stage == "val",
+            )
+
+        return ssl_loss, p, t
 
     def step(
         self, batch, batch_idx: int, stage: str = "train"
-    ) -> Tuple[torch.Tensor, audiotools.AudioSignal]:
+    ) -> Tuple[torch.Tensor, Optional[audiotools.AudioSignal]]:
         wavs = batch["input_wav"][:,:,:] # only use first channel
         batch_size = wavs.shape[0]
         opt_g, opt_d = self.optimizers()  # type: ignore
         sch_g, sch_d = self.lr_schedulers()  # type: ignore
-        with torch.inference_mode():
-            ssl_loss, predicted, target = self.feature_predictor.step(batch, batch_idx, stage="val",log=False)
+        ssl_loss, predicted, target = self.feature_predictor_step(batch, batch_idx, stage=stage,log=True)
 
         predicted = self._align_predicted_speakers(predicted, target, stage)
 
@@ -616,21 +679,12 @@ class DialogueSidonLightningModule(LightningModule):
         wavs = audiotools.AudioSignal(
             wavs.view(batch_size, 2, -1), sample_rate=self.cfg.sample_rate
         )
-        speech_mask, voiced_ratio = self._compute_voice_mask(wavs.audio_data)
-        speech_mask = speech_mask.detach()
-        self.log(
-            f"{stage}/voiced_ratio",
-            voiced_ratio.detach(),
-            on_step=stage == "train",
-            on_epoch=True,
-            prog_bar=stage == "train",
-        )
         masked_predicted = audiotools.AudioSignal(
-            predicted_clean_wavs.audio_data * speech_mask,
+            predicted_clean_wavs.audio_data,
             sample_rate=self.cfg.sample_rate,
         )
         masked_target = audiotools.AudioSignal(
-            wavs.audio_data * speech_mask,
+            wavs.audio_data,
             sample_rate=self.cfg.sample_rate,
         )
         regression_loss = self.regression_loss(masked_target, masked_predicted)["mel_loss"]
@@ -676,6 +730,7 @@ class DialogueSidonLightningModule(LightningModule):
             self.cfg.loss.loss_weight["regression_loss"] * regression_loss
             + self.cfg.loss.loss_weight["adv_gen"] * adv_gen
             + self.cfg.loss.loss_weight["adv_feature"] * adv_feature
+            + self.cfg.loss.loss_weight["ssl_loss"] * ssl_loss
         )
         self.log(f"{stage}/total_loss", total_loss)
         if stage == "train":
@@ -716,7 +771,7 @@ class DialogueSidonLightningModule(LightningModule):
 
     def configure_optimizers(self):  # type: ignore
         opt_g = torch.optim.AdamW(
-            self.decoder.parameters(),
+            itertools.chain(self.decoder.parameters(), self.student_ssl_model.parameters(), self.output_linear.parameters()),
             lr=self.cfg.optim.lr,
             weight_decay=self.cfg.optim.weight_decay,
             betas=(0.8, 0.98),
@@ -763,3 +818,485 @@ class DialogueSidonLightningModule(LightningModule):
                     self.global_step,
                     sampling_rate,
                 )
+
+    @torch.inference_mode()
+    def predict_separated(
+        self,
+        wav: torch.Tensor,
+        sample_rate: int,
+    ) -> Tuple[torch.Tensor, int]:
+        """Predict channel-separated speech from a mono mixture using diffusion."""
+        was_training = self.training
+        self.eval()
+        try:
+            device = self.device
+            wav = torch.as_tensor(wav, dtype=torch.float32, device=device)
+            if wav.ndim == 2:
+                if wav.shape[0] <= 2 and wav.shape[1] > 2:
+                    wav = wav.mean(dim=0, keepdim=True)
+                else:
+                    # Assume shape is (batch, time) already.
+                    pass
+            elif wav.ndim == 1:
+                wav = wav.unsqueeze(0)
+            else:
+                raise ValueError("wav must be 1D or 2D (time or batch/time)")
+
+            if sample_rate != 16000:
+                wav_16k = torchaudio.functional.resample(wav, sample_rate, 16_000)
+            else:
+                wav_16k = wav
+
+            def _normalize_and_pad(signal: torch.Tensor) -> torch.Tensor:
+                max_val = signal.abs().max().clamp_min(1e-6)
+                return torch.nn.functional.pad(0.9 * signal / max_val, (160, 160))
+
+            wav_list = [_normalize_and_pad(sample.view(-1)) for sample in wav_16k]
+            noisy_ssl_inputs = extract_seamless_m4t_features(
+                wav_list,
+                device=str(device),
+            )
+
+            batch_size = noisy_ssl_inputs["input_features"].shape[0]
+            n_speakers = 2
+            conditioning = (
+                torch.arange(n_speakers, device=device)
+                .unsqueeze(1)
+                .expand(-1, batch_size)
+                .reshape(-1)
+            )
+
+            def _repeat_batchenc(enc: dict[str, torch.Tensor], repeats: int):
+                out: dict[str, torch.Tensor] = {}
+                for key, value in enc.items():
+                    if isinstance(value, torch.Tensor):
+                        out[key] = torch.cat([value] * repeats, dim=0)
+                    elif value is None:
+                        out[key] = None
+                    else:
+                        out[key] = value
+                return out
+
+            noisy_batch = _repeat_batchenc(noisy_ssl_inputs, n_speakers)
+            student_features = self.student_ssl_model(
+                **noisy_batch, conditioning=conditioning
+            ).last_hidden_state
+            student_features = self.output_linear(student_features)
+            predicted = student_features.view(
+                n_speakers, batch_size, *student_features.shape[1:]
+            ).float()
+
+            conditioning_latents = torch.cat([predicted[0], predicted[1]], dim=-1).detach()
+            sampled_latents = self.sample_latents(
+                conditioning_latents,
+                conditioning_latents.shape[1],
+            )
+            predicted_clean_wavs = self._decode_latents(sampled_latents).audio_data
+
+            if predicted_clean_wavs.shape[0] == 1:
+                predicted_clean_wavs = predicted_clean_wavs[0]
+            return predicted_clean_wavs, self.cfg.sample_rate
+        finally:
+            if was_training:
+                self.train()
+
+class DialogueSidonDiffusionLightningModule(LightningModule):
+
+    def __init__(self, cfg: DictConfig) -> None:
+        super().__init__()
+        self.cfg = cfg
+        self.save_hyperparameters()
+        self.student_ssl_model = transformers.Wav2Vec2BertModel.from_pretrained(
+            cfg.ssl_model_name, num_hidden_layers=13, layerdrop=0.0
+        ).train()
+
+        if cfg.get('lora', True):
+            self.student_ssl_model = get_peft_model(
+                self.student_ssl_model,
+                LoraConfig(
+                    r=64,
+                    lora_alpha=16,
+                    lora_dropout=0.1,
+                    target_modules=["output_dense","intermediate_dense","linear_q", "linear_k","linear_v"],
+                )
+            )
+        self.vae = SSLVAE.load_from_checkpoint(
+            cfg.vae_checkpoint_path
+        ).eval()
+        # remove deocoder in vae
+        self.output_linear1 = torch.nn.Linear(self.student_ssl_model.config.hidden_size,
+                                             self.vae.bottleneck.cfg.latent_dim)
+        self.output_linear2 = torch.nn.Linear(self.student_ssl_model.config.hidden_size,
+                                             self.vae.bottleneck.cfg.latent_dim)
+
+        self.ssl_model_criterion = torch.nn.MSELoss()
+        for param in self.vae.parameters():
+            param.requires_grad = False
+        self.pit = PermutationInvariantTraining(self.ssl_model_criterion,'speaker-wise','min')
+        latent_size = self.vae.bottleneck.cfg.latent_dim * 2
+        head_cfg = cfg.get("diffusion_head", {})
+        hidden_size = head_cfg.get("hidden_size", latent_size)
+        head_layers = head_cfg.get("head_layers", 6)
+        head_ffn_ratio = head_cfg.get("head_ffn_ratio", 4.0)
+        rms_norm_eps = head_cfg.get("rms_norm_eps", 1e-5)
+        self.diffusion_head = VibeVoiceDiffusionHead(
+            cond_size=(self.student_ssl_model.config.hidden_size + latent_size),
+            latent_size=latent_size,
+            hidden_size=hidden_size,
+            head_layers=head_layers,
+            head_ffn_ratio=head_ffn_ratio,
+            rms_norm_eps=rms_norm_eps,
+        )
+        diffusion_cfg = cfg.get("diffusion", {})
+        num_train_steps = diffusion_cfg.get("num_train_timesteps", 1000)
+        prediction_type = diffusion_cfg.get("prediction_type", "epsilon")
+        if prediction_type not in ("epsilon", "v_prediction"):
+            raise ValueError(
+                f"Unsupported diffusion prediction_type: {prediction_type}. "
+                "Expected 'epsilon' or 'v_prediction'."
+            )
+        self.ddpm_scheduler = DPMSolverMultistepScheduler(
+            num_train_timesteps=num_train_steps,
+            prediction_type=prediction_type,
+            algorithm_type="dpmsolver++",
+        )
+
+    def on_fit_start(self) -> None:
+        torch.set_float32_matmul_precision("medium")
+
+
+    def _align_predicted_speakers(
+        self,
+        predicted: torch.Tensor,
+        target: torch.Tensor,
+        stage: str,
+    ) -> torch.Tensor:
+        """Ensure predicted speaker order matches clean reference."""
+        n_speakers = predicted.shape[0]
+        if n_speakers != 2:
+            return predicted
+
+        def _speaker_distance(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+            diff = (a - b).pow(2)
+            return diff.view(diff.shape[0], diff.shape[1], -1).mean(dim=-1)
+
+        same_cost = _speaker_distance(predicted, target).sum(dim=0)
+        swapped = predicted.flip(0)
+        swapped_cost = _speaker_distance(swapped, target).sum(dim=0)
+        swap_mask = swapped_cost < same_cost
+        if swap_mask.any():
+            aligned = predicted.clone()
+            aligned[:, swap_mask] = swapped[:, swap_mask]
+        else:
+            aligned = predicted
+        swap_rate = swap_mask.float().mean()
+        self.log(
+            f"{stage}/speaker_swap_rate",
+            swap_rate,
+            on_step=stage == "train",
+            on_epoch=True,
+        )
+        return aligned,swap_mask
+    def feature_predictor_step(self, batch, batch_idx: int, stage: str = "train",log:bool=False) -> tuple[torch.Tensor,torch.Tensor,torch.Tensor]:
+        noisy_16k_mixture = batch["noisy_16k_mixture"]
+        clean_input_wavs = batch["input_wav"]
+        with torch.inference_mode():
+            clean_input_wavs = torchaudio.functional.resample(clean_input_wavs,batch['sr'], 16_000)
+            clean_ssl_inputs_0 = extract_seamless_m4t_features(
+                [torch.nn.functional.pad(clean_input_wav[0].view(-1),(160,160)) for clean_input_wav in clean_input_wavs],
+                device=str(self.device)
+            )
+            clean_ssl_inputs_1 = extract_seamless_m4t_features(
+                [torch.nn.functional.pad(clean_input_wav[1].view(-1),(160,160)) for clean_input_wav in clean_input_wavs],
+                device=str(self.device)
+            )
+            noisy_ssl_inputs = extract_seamless_m4t_features(
+                [torch.nn.functional.pad(0.9 * noisy.view(-1) / noisy.abs().max(),(160,160)) for noisy in noisy_16k_mixture],
+                device=str(self.device)
+            )
+        clean_inputs = [clean_ssl_inputs_0, clean_ssl_inputs_1]
+        n_speakers = len(clean_inputs)
+        batch_size = clean_ssl_inputs_0["input_features"].shape[0]
+
+        def _concat_batchenc(enc_list: list[dict[str, torch.Tensor]]):
+            out: dict[str, torch.Tensor] = {}
+            for key, value in enc_list[0].items():
+                if isinstance(value, torch.Tensor):
+                    out[key] = torch.cat([enc[key] for enc in enc_list], dim=0)
+                elif value is None:
+                    out[key] = None
+                else:
+                    out[key] = value
+            return out
+
+        def _repeat_batchenc(enc: dict[str, torch.Tensor], repeats: int):
+            out: dict[str, torch.Tensor] = {}
+            for key, value in enc.items():
+                if isinstance(value, torch.Tensor):
+                    out[key] = torch.cat([value] * repeats, dim=0)
+                elif value is None:
+                    out[key] = None
+                else:
+                    out[key] = value
+            return out
+
+        teacher_batch = _concat_batchenc(clean_inputs)
+        with torch.inference_mode():
+            teacher_features,_,_,_ = self.vae.encode(teacher_batch)
+
+        student_features = self.student_ssl_model(
+            **{k:v.clone() for k,v in noisy_ssl_inputs.items()}
+        ).last_hidden_state
+        student_features_small1 = self.output_linear1(student_features)
+        student_features_small2 = self.output_linear2(student_features)
+        student_features_small = torch.stack([student_features_small1,student_features_small2],dim=0)
+
+        p = student_features_small
+        t = teacher_features.view(n_speakers, batch_size, *teacher_features.shape[1:]).float()
+        ssl_loss = self.pit(p.transpose(0,1),t.transpose(0,1).clone())
+        
+        if log:
+            self.log(
+                f"{stage}/ssl_loss",
+                ssl_loss,
+                on_step=stage == "train",
+                on_epoch=stage == "val",
+                sync_dist=stage == "val",
+            )
+
+        return ssl_loss, p, t, student_features
+
+    def step(
+        self, batch, batch_idx: int, stage: str = "train",sample=False
+    ) -> Tuple[torch.Tensor, audiotools.AudioSignal]:
+        ssl_loss, predicted, target,features = self.feature_predictor_step(batch, batch_idx, stage=stage,log=True)
+
+        predicted,swap_mask = self._align_predicted_speakers(predicted, target, stage)
+        target_latents = torch.cat([target[0], target[1]], dim=-1)
+        conditioning_latents = torch.cat([predicted[0], predicted[1],features], dim=-1)
+
+        diffusion_loss, _ = self._diffusion_loss(
+            target_latents,
+            conditioning_latents,
+        )
+        total_loss = ssl_loss + diffusion_loss
+        self.log(
+            f"{stage}/diffusion_loss",
+            diffusion_loss,
+            on_step=stage == "train",
+            on_epoch=stage == "val",
+            sync_dist=stage == "val",
+        )
+
+        predicted_clean_wavs = None
+        resynthesis_wavs = None
+        if  sample:
+            sampled_latents = self.sample_latents(
+                conditioning_latents,
+                target_latents.shape[1],
+            )
+            predicted_clean_wavs = self._decode_latents(sampled_latents)
+            resynthesis_wavs = self._decode_latents(target_latents)
+
+        return total_loss, predicted_clean_wavs,resynthesis_wavs
+
+
+    def training_step(self, batch, batch_idx):
+        loss, _,_ = self.step(batch, batch_idx, stage="train")
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss, predicted_clean_wavs,resynthesis_wavs = self.step(batch, batch_idx, stage="val", sample=(batch_idx < 5))
+        if self.global_rank == 0 and batch_idx < 5 and predicted_clean_wavs is not None:
+            self.log_audio(
+                predicted_clean_wavs.audio_data[0].detach(),
+                f"val/synthesized_{batch_idx}",
+                self.cfg.sample_rate,
+            )
+            self.log_audio(
+                resynthesis_wavs.audio_data[0].detach(),
+                f"val/resynthesized_{batch_idx}",
+                self.cfg.sample_rate,
+            )
+            self.log_audio(
+                batch["noisy_16k_mixture"][0].detach(),
+                f"val/noisy_input_{batch_idx}",
+                16_000,
+            )
+            self.log_audio(
+                batch["input_wav"][0].detach(),
+                f"val/original_{batch_idx}",
+                self.cfg.sample_rate,
+            )
+        return loss
+
+    def configure_optimizers(self):  # type: ignore
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.cfg.optim.lr,
+            weight_decay=self.cfg.optim.weight_decay,
+        )
+        scheduler = transformers.get_constant_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=2_000,
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+                "frequency": 1,
+            },
+        }
+
+    def _diffusion_loss(
+        self,
+        target_latents: torch.Tensor,
+        conditioning: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size, seq_len, latent_dim = target_latents.shape
+        noise = torch.randn_like(target_latents)
+        timesteps = torch.randint(
+            0,
+            self.ddpm_scheduler.config.num_train_timesteps,
+            (batch_size,),
+            device=target_latents.device,
+            dtype=torch.long,
+        )
+        noisy_latents = self.ddpm_scheduler.add_noise(target_latents, noise, timesteps)
+        noisy_flat = noisy_latents.view(batch_size * seq_len, latent_dim)
+        timesteps_flat = timesteps.repeat_interleave(seq_len)
+        cond_size = conditioning.shape[-1]
+        cond_flat = conditioning.view(batch_size * seq_len,cond_size)
+        predicted_noise = self.diffusion_head(noisy_flat, timesteps_flat, cond_flat)
+        if self.ddpm_scheduler.config.prediction_type == "v_prediction":
+            target = self.ddpm_scheduler.get_velocity(target_latents, noise, timesteps)
+        else:
+            target = noise
+        target_flat = target.view(batch_size * seq_len, latent_dim)
+        diffusion_loss = F.mse_loss(predicted_noise, target_flat)
+        return diffusion_loss, predicted_noise
+
+    @torch.inference_mode()
+    def sample_latents(
+        self,
+        conditioning: torch.Tensor,
+        seq_len: int,
+        num_steps: Optional[int] = None,
+    ) -> torch.Tensor:
+        batch_size, _, cond_dim = conditioning.shape
+        latent_dim = self.vae.bottleneck.cfg.latent_dim * 2
+        diffusion_cfg = self.cfg.get("diffusion", {})
+        total_steps = num_steps or diffusion_cfg.get("num_inference_steps", 1000)
+        self.ddpm_scheduler.set_timesteps(total_steps, device=conditioning.device)
+        latents = torch.randn(
+            (batch_size, seq_len, latent_dim),
+            device=conditioning.device,
+            dtype=conditioning.dtype,
+        )
+        latents_flat = latents.view(batch_size * seq_len, latent_dim)
+        cond_flat = conditioning.view(batch_size * seq_len, cond_dim)
+        for t in self.ddpm_scheduler.timesteps:
+            t_flat = torch.full(
+                (batch_size * seq_len,),
+                t,
+                device=conditioning.device,
+                dtype=torch.long,
+            )
+            model_output = self.diffusion_head(latents_flat, t_flat, cond_flat)
+            latents_flat = self.ddpm_scheduler.step(model_output, t, latents_flat).prev_sample
+        return latents_flat.view(batch_size, seq_len, latent_dim)
+
+    def _decode_latents(self, latents: torch.Tensor) -> audiotools.AudioSignal:
+        latent_dim = self.vae.bottleneck.cfg.latent_dim
+        first_latent = latents[:,:,:latent_dim] 
+        first_latent = first_latent.transpose(1, 2)
+        predicted_clean_wavs_first = self.vae.decoder.forward(first_latent)
+        second_latent = latents[:,:,latent_dim:] 
+        second_latent = second_latent.transpose(1, 2)
+        predicted_clean_wavs_second = self.vae.decoder.forward(second_latent)
+        predicted_clean_wavs = torch.cat([predicted_clean_wavs_first,predicted_clean_wavs_second],dim=1)
+        return audiotools.AudioSignal(
+            predicted_clean_wavs,
+            sample_rate=self.cfg.sample_rate,
+        )
+
+    def log_audio(self, audio: torch.Tensor, name: str, sampling_rate: int) -> None:
+        audio = audio.float().cpu().numpy().T
+        for logger in self.loggers:
+            if isinstance(logger, loggers.WandbLogger):
+                import wandb
+
+                wandb.log(
+                    {name: wandb.Audio(audio, sample_rate=sampling_rate)},
+                    step=self.global_step,
+                )
+            elif isinstance(logger, loggers.TensorBoardLogger):
+                logger.experiment.add_audio(
+                    name,
+                    audio,
+                    self.global_step,
+                    sampling_rate,
+                )
+
+    @torch.inference_mode()
+    def predict_separated(
+        self,
+        wav: torch.Tensor,
+        sample_rate: int,
+    ) -> Tuple[torch.Tensor, int]:
+        """Predict channel-separated speech from a mono mixture."""
+        was_training = self.training
+        self.eval()
+        try:
+            device = self.device
+            wav = torch.as_tensor(wav, dtype=torch.float32, device=device)
+            if wav.ndim == 2:
+                if wav.shape[0] <= 2 and wav.shape[1] > 2:
+                    wav = wav.mean(dim=0, keepdim=True)
+                else:
+                    # Assume shape is (batch, time) already.
+                    pass
+            elif wav.ndim == 1:
+                wav = wav.unsqueeze(0)
+            else:
+                raise ValueError("wav must be 1D or 2D (time or batch/time)")
+
+            if sample_rate != 16000:
+                wav_16k = torchaudio.functional.resample(wav, sample_rate, 16_000)
+            else:
+                wav_16k = wav
+
+            def _normalize_and_pad(signal: torch.Tensor) -> torch.Tensor:
+                max_val = signal.abs().max().clamp_min(1e-6)
+                return torch.nn.functional.pad(0.9 * signal / max_val, (160, 160))
+
+            wav_list = [_normalize_and_pad(sample.view(-1)) for sample in wav_16k]
+            noisy_ssl_inputs = extract_seamless_m4t_features(
+                wav_list,
+                device=str(device),
+            )
+
+            student_features = self.student_ssl_model(
+                **{k: v.clone() for k, v in noisy_ssl_inputs.items()}
+            ).last_hidden_state
+            predicted_0 = self.output_linear1(student_features)
+            predicted_1 = self.output_linear2(student_features)
+            predicted = torch.stack([predicted_0, predicted_1], dim=0).float()
+
+            conditioning = torch.cat(
+                [predicted[0], predicted[1], student_features],
+                dim=-1,
+            )
+            sampled_latents = self.sample_latents(
+                conditioning,
+                conditioning.shape[1],
+            )
+            predicted_clean_wavs = self._decode_latents(sampled_latents).audio_data
+
+            if predicted_clean_wavs.shape[0] == 1:
+                predicted_clean_wavs = predicted_clean_wavs[0]
+            return predicted_clean_wavs, self.cfg.sample_rate
+        finally:
+            if was_training:
+                self.train()

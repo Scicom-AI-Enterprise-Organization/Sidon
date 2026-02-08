@@ -213,3 +213,6 @@ wandb/
 notebooks/
 *.ckpt
 sidon_runs/
+*.mp3
+*.wav
+*.mp4
