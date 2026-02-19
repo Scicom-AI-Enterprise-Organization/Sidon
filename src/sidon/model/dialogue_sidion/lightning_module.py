@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F
 import transformers
 import itertools
+import torch.distributed as dist
 from lightning import LightningModule
 import torchaudio
 import torch.nn as nn
@@ -23,6 +24,7 @@ from omegaconf import DictConfig
 from peft import LoraConfig, inject_adapter_in_model
 from torchmetrics.audio import PermutationInvariantTraining
 from peft import get_peft_model,LoraConfig
+import diffusers
 from .model import add_cond_adapters_all_layers, FiLM 
 from .audio import extract_seamless_m4t_features
 from typing import Optional, Union
@@ -308,6 +310,174 @@ class VibeVoiceDiffusionHead(nn.Module):
             x = layer(x, c)
         x = self.final_layer(x, c)
         return x
+
+
+class DiTBlock(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        ffn_ratio: float = 4.0,
+        dropout: float = 0.0,
+        use_rotary: bool = True,
+    ) -> None:
+        super().__init__()
+        if hidden_size % num_heads != 0:
+            raise ValueError(
+                f"hidden_size ({hidden_size}) must be divisible by num_heads ({num_heads})."
+            )
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+        if self.head_dim % 2 != 0:
+            raise ValueError(
+                f"Per-head dimension ({self.head_dim}) must be even for rotary embeddings."
+            )
+        self.use_rotary = use_rotary
+        self.dropout = dropout
+        self.norm1 = nn.LayerNorm(hidden_size, eps=1e-6, elementwise_affine=False)
+        self.q_proj = nn.Linear(hidden_size, hidden_size, bias=True)
+        self.k_proj = nn.Linear(hidden_size, hidden_size, bias=True)
+        self.v_proj = nn.Linear(hidden_size, hidden_size, bias=True)
+        self.out_proj = nn.Linear(hidden_size, hidden_size, bias=True)
+        self.norm2 = nn.LayerNorm(hidden_size, eps=1e-6, elementwise_affine=False)
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_size, int(hidden_size * ffn_ratio), bias=True),
+            nn.GELU(),
+            nn.Linear(int(hidden_size * ffn_ratio), hidden_size, bias=True),
+        )
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_size, 6 * hidden_size, bias=True),
+        )
+
+    @staticmethod
+    def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+        x1, x2 = x.chunk(2, dim=-1)
+        return torch.cat([-x2, x1], dim=-1)
+
+    def _apply_rope(self, q: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        seq_len = q.shape[1]
+        device = q.device
+        dtype = q.dtype
+        half_dim = self.head_dim // 2
+        inv_freq = 1.0 / (
+            10000
+            ** (
+                torch.arange(0, half_dim, device=device, dtype=torch.float32)
+                / float(half_dim)
+            )
+        )
+        positions = torch.arange(seq_len, device=device, dtype=torch.float32)
+        freqs = torch.outer(positions, inv_freq)
+        cos = torch.cat([torch.cos(freqs), torch.cos(freqs)], dim=-1).to(dtype=dtype)
+        sin = torch.cat([torch.sin(freqs), torch.sin(freqs)], dim=-1).to(dtype=dtype)
+        cos = cos.unsqueeze(0).unsqueeze(2)
+        sin = sin.unsqueeze(0).unsqueeze(2)
+        q = (q * cos) + (self._rotate_half(q) * sin)
+        k = (k * cos) + (self._rotate_half(k) * sin)
+        return q, k
+
+    def forward(self, x: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        shift_attn, scale_attn, gate_attn, shift_mlp, scale_mlp, gate_mlp = (
+            self.adaLN_modulation(c).chunk(6, dim=-1)
+        )
+        h = _modulate(self.norm1(x), shift_attn, scale_attn)
+        batch_size, seq_len, hidden_size = h.shape
+        q = self.q_proj(h).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        k = self.k_proj(h).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        v = self.v_proj(h).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        if self.use_rotary:
+            q, k = self._apply_rope(q, k)
+        q = q.permute(0, 2, 1, 3)
+        k = k.permute(0, 2, 1, 3)
+        v = v.permute(0, 2, 1, 3)
+        h = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            dropout_p=self.dropout if self.training else 0.0,
+            is_causal=False,
+        )
+        h = h.permute(0, 2, 1, 3).contiguous().view(batch_size, seq_len, hidden_size)
+        h = self.out_proj(h)
+        x = x + gate_attn * h
+        h = _modulate(self.norm2(x), shift_mlp, scale_mlp)
+        h = self.mlp(h)
+        x = x + gate_mlp * h
+        return x
+
+
+class DiTFinalLayer(nn.Module):
+    def __init__(self, hidden_size: int, output_size: int) -> None:
+        super().__init__()
+        self.norm_final = nn.LayerNorm(hidden_size, eps=1e-6, elementwise_affine=False)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_size, 2 * hidden_size, bias=True),
+        )
+        self.linear = nn.Linear(hidden_size, output_size, bias=False)
+
+    def forward(self, x: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        shift, scale = self.adaLN_modulation(c).chunk(2, dim=-1)
+        x = _modulate(self.norm_final(x), shift, scale)
+        return self.linear(x)
+
+
+class DiffusionTransformerHead(nn.Module):
+    def __init__(
+        self,
+        latent_size: int,
+        cond_size: int,
+        hidden_size: int = 512,
+        num_layers: int = 6,
+        num_heads: int = 8,
+        ffn_ratio: float = 4.0,
+        dropout: float = 0.0,
+        use_positional: bool = True,
+    ) -> None:
+        super().__init__()
+        self.use_positional = use_positional
+        self.t_embedder = TimestepEmbedder(hidden_size)
+        self.latent_proj = nn.Linear(latent_size, hidden_size, bias=False)
+        self.cond_proj = nn.Linear(cond_size, hidden_size, bias=False)
+        self.blocks = nn.ModuleList(
+            [
+                DiTBlock(
+                    hidden_size=hidden_size,
+                    num_heads=num_heads,
+                    ffn_ratio=ffn_ratio,
+                    dropout=dropout,
+                    use_rotary=use_positional,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+        self.final_layer = DiTFinalLayer(hidden_size=hidden_size, output_size=latent_size)
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+        for block in self.blocks:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer.linear.weight, 0)
+
+    def forward(
+        self,
+        noisy_latents: torch.Tensor,
+        timesteps: torch.Tensor,
+        conditioning: torch.Tensor,
+    ) -> torch.Tensor:
+        batch_size, seq_len, _ = noisy_latents.shape
+        x = self.latent_proj(noisy_latents)
+        t_embed = self.t_embedder(timesteps).unsqueeze(1).expand(batch_size, seq_len, -1)
+        c = self.cond_proj(conditioning) + t_embed
+        for block in self.blocks:
+            x = block(x, c)
+        return self.final_layer(x, c)
 
 
 class DialogueFeaturePredictorLightningModule(LightningModule):
@@ -934,18 +1104,35 @@ class DialogueSidonDiffusionLightningModule(LightningModule):
             param.requires_grad = False
         self.pit = PermutationInvariantTraining(self.ssl_model_criterion,'speaker-wise','min')
         latent_size = self.vae.bottleneck.cfg.latent_dim * 2
-        head_cfg = cfg.get("diffusion_head", {})
-        hidden_size = head_cfg.get("hidden_size", latent_size)
-        head_layers = head_cfg.get("head_layers", 6)
-        head_ffn_ratio = head_cfg.get("head_ffn_ratio", 4.0)
-        rms_norm_eps = head_cfg.get("rms_norm_eps", 1e-5)
-        self.diffusion_head = VibeVoiceDiffusionHead(
-            cond_size=(self.student_ssl_model.config.hidden_size + latent_size),
+        latent_norm_cfg = cfg.get("latent_normalization", {})
+        self.enable_latent_normalization = latent_norm_cfg.get("enabled", True)
+        self.latent_norm_eps = latent_norm_cfg.get("eps", 1e-6)
+        self.register_buffer(
+            "latent_norm_mean",
+            torch.zeros((1, 1, latent_size), dtype=torch.float32),
+            persistent=True,
+        )
+        self.register_buffer(
+            "latent_norm_std",
+            torch.ones((1, 1, latent_size), dtype=torch.float32),
+            persistent=True,
+        )
+        self.register_buffer(
+            "latent_norm_initialized",
+            torch.tensor(False, dtype=torch.bool),
+            persistent=True,
+        )
+        input_size = self.student_ssl_model.config.hidden_size + latent_size
+        diffusion_head_cfg = cfg.get("diffusion_head", {})
+        self.diffusion_head = DiffusionTransformerHead(
             latent_size=latent_size,
-            hidden_size=hidden_size,
-            head_layers=head_layers,
-            head_ffn_ratio=head_ffn_ratio,
-            rms_norm_eps=rms_norm_eps,
+            cond_size=input_size,
+            hidden_size=diffusion_head_cfg.get("hidden_size", 512),
+            num_layers=diffusion_head_cfg.get("head_layers", 6),
+            num_heads=diffusion_head_cfg.get("num_heads", 8),
+            ffn_ratio=diffusion_head_cfg.get("head_ffn_ratio", 4.0),
+            dropout=diffusion_head_cfg.get("dropout", 0.0),
+            use_positional=diffusion_head_cfg.get("use_positional", False),
         )
         diffusion_cfg = cfg.get("diffusion", {})
         num_train_steps = diffusion_cfg.get("num_train_timesteps", 1000)
@@ -955,14 +1142,73 @@ class DialogueSidonDiffusionLightningModule(LightningModule):
                 f"Unsupported diffusion prediction_type: {prediction_type}. "
                 "Expected 'epsilon' or 'v_prediction'."
             )
-        self.ddpm_scheduler = DPMSolverMultistepScheduler(
+        self.ddpm_scheduler = DDPMScheduler(
             num_train_timesteps=num_train_steps,
             prediction_type=prediction_type,
-            algorithm_type="dpmsolver++",
         )
 
     def on_fit_start(self) -> None:
         torch.set_float32_matmul_precision("medium")
+
+    def _is_latent_norm_initialized(self) -> bool:
+        return bool(self.latent_norm_initialized.item())
+
+    @torch.no_grad()
+    def _maybe_init_latent_normalization(self, target_latents: torch.Tensor) -> None:
+        if not self.enable_latent_normalization or self._is_latent_norm_initialized():
+            return
+
+        flat = target_latents.detach().float().reshape(-1, target_latents.shape[-1])
+        local_count = torch.tensor(float(flat.shape[0]), device=flat.device, dtype=torch.float32)
+        local_sum = flat.sum(dim=0)
+        local_sq_sum = flat.square().sum(dim=0)
+
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(local_count, op=dist.ReduceOp.SUM)
+            dist.all_reduce(local_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(local_sq_sum, op=dist.ReduceOp.SUM)
+
+        count = local_count.clamp_min(1.0)
+        mean = local_sum / count
+        second_moment = local_sq_sum / count
+        var = (second_moment - mean.square()).clamp_min(self.latent_norm_eps)
+        std = torch.sqrt(var)
+
+        self.latent_norm_mean.copy_(
+            mean.view(1, 1, -1).to(
+                device=self.latent_norm_mean.device,
+                dtype=self.latent_norm_mean.dtype,
+            )
+        )
+        self.latent_norm_std.copy_(
+            std.view(1, 1, -1).to(
+                device=self.latent_norm_std.device,
+                dtype=self.latent_norm_std.dtype,
+            )
+        )
+        self.latent_norm_initialized.fill_(True)
+
+        self.log(
+            "train/latent_norm_std_mean",
+            self.latent_norm_std.mean(),
+            on_step=True,
+            on_epoch=False,
+            sync_dist=True,
+        )
+
+    def _normalize_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        if not self.enable_latent_normalization or not self._is_latent_norm_initialized():
+            return latents
+        mean = self.latent_norm_mean.to(device=latents.device)
+        std = self.latent_norm_std.to(device=latents.device)
+        return ((latents.float() - mean) / std).to(dtype=latents.dtype)
+
+    def _denormalize_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        if not self.enable_latent_normalization or not self._is_latent_norm_initialized():
+            return latents
+        mean = self.latent_norm_mean.to(device=latents.device)
+        std = self.latent_norm_std.to(device=latents.device)
+        return (latents.float() * std + mean).to(dtype=latents.dtype)
 
 
     def _align_predicted_speakers(
@@ -1073,10 +1319,16 @@ class DialogueSidonDiffusionLightningModule(LightningModule):
 
         predicted,swap_mask = self._align_predicted_speakers(predicted, target, stage)
         target_latents = torch.cat([target[0], target[1]], dim=-1)
-        conditioning_latents = torch.cat([predicted[0], predicted[1],features], dim=-1)
+        predicted_latents = torch.cat([predicted[0], predicted[1]], dim=-1)
+        if stage == "train":
+            self._maybe_init_latent_normalization(target_latents)
+
+        normalized_target_latents = self._normalize_latents(target_latents)
+        normalized_predicted_latents = self._normalize_latents(predicted_latents)
+        conditioning_latents = torch.cat([normalized_predicted_latents,features], dim=-1)
 
         diffusion_loss, _ = self._diffusion_loss(
-            target_latents,
+            normalized_target_latents,
             conditioning_latents,
         )
         total_loss = ssl_loss + diffusion_loss
@@ -1093,9 +1345,9 @@ class DialogueSidonDiffusionLightningModule(LightningModule):
         if  sample:
             sampled_latents = self.sample_latents(
                 conditioning_latents,
-                target_latents.shape[1],
+                normalized_target_latents.shape[1],
             )
-            predicted_clean_wavs = self._decode_latents(sampled_latents)
+            predicted_clean_wavs = self._decode_latents(sampled_latents, normalized=True)
             resynthesis_wavs = self._decode_latents(target_latents)
 
         return total_loss, predicted_clean_wavs,resynthesis_wavs
@@ -1164,17 +1416,12 @@ class DialogueSidonDiffusionLightningModule(LightningModule):
             dtype=torch.long,
         )
         noisy_latents = self.ddpm_scheduler.add_noise(target_latents, noise, timesteps)
-        noisy_flat = noisy_latents.view(batch_size * seq_len, latent_dim)
-        timesteps_flat = timesteps.repeat_interleave(seq_len)
-        cond_size = conditioning.shape[-1]
-        cond_flat = conditioning.view(batch_size * seq_len,cond_size)
-        predicted_noise = self.diffusion_head(noisy_flat, timesteps_flat, cond_flat)
+        predicted_noise = self.diffusion_head(noisy_latents, timesteps, conditioning)
         if self.ddpm_scheduler.config.prediction_type == "v_prediction":
             target = self.ddpm_scheduler.get_velocity(target_latents, noise, timesteps)
         else:
             target = noise
-        target_flat = target.view(batch_size * seq_len, latent_dim)
-        diffusion_loss = F.mse_loss(predicted_noise, target_flat)
+        diffusion_loss = F.mse_loss(predicted_noise, target)
         return diffusion_loss, predicted_noise
 
     @torch.inference_mode()
@@ -1194,20 +1441,20 @@ class DialogueSidonDiffusionLightningModule(LightningModule):
             device=conditioning.device,
             dtype=conditioning.dtype,
         )
-        latents_flat = latents.view(batch_size * seq_len, latent_dim)
-        cond_flat = conditioning.view(batch_size * seq_len, cond_dim)
         for t in self.ddpm_scheduler.timesteps:
-            t_flat = torch.full(
-                (batch_size * seq_len,),
+            t_batch = torch.full(
+                (batch_size,),
                 t,
                 device=conditioning.device,
                 dtype=torch.long,
             )
-            model_output = self.diffusion_head(latents_flat, t_flat, cond_flat)
-            latents_flat = self.ddpm_scheduler.step(model_output, t, latents_flat).prev_sample
-        return latents_flat.view(batch_size, seq_len, latent_dim)
+            model_output = self.diffusion_head(latents, t_batch, conditioning)
+            latents = self.ddpm_scheduler.step(model_output, t, latents).prev_sample
+        return latents
 
-    def _decode_latents(self, latents: torch.Tensor) -> audiotools.AudioSignal:
+    def _decode_latents(self, latents: torch.Tensor, normalized: bool = False) -> audiotools.AudioSignal:
+        if normalized:
+            latents = self._denormalize_latents(latents)
         latent_dim = self.vae.bottleneck.cfg.latent_dim
         first_latent = latents[:,:,:latent_dim] 
         first_latent = first_latent.transpose(1, 2)
@@ -1244,6 +1491,7 @@ class DialogueSidonDiffusionLightningModule(LightningModule):
         self,
         wav: torch.Tensor,
         sample_rate: int,
+        num_steps: int|None = None
     ) -> Tuple[torch.Tensor, int]:
         """Predict channel-separated speech from a mono mixture."""
         was_training = self.training
@@ -1283,16 +1531,18 @@ class DialogueSidonDiffusionLightningModule(LightningModule):
             predicted_0 = self.output_linear1(student_features)
             predicted_1 = self.output_linear2(student_features)
             predicted = torch.stack([predicted_0, predicted_1], dim=0).float()
+            predicted_latents = torch.cat([predicted[0], predicted[1]], dim=-1)
 
             conditioning = torch.cat(
-                [predicted[0], predicted[1], student_features],
+                [self._normalize_latents(predicted_latents), student_features],
                 dim=-1,
             )
             sampled_latents = self.sample_latents(
                 conditioning,
                 conditioning.shape[1],
+                num_steps=num_steps
             )
-            predicted_clean_wavs = self._decode_latents(sampled_latents).audio_data
+            predicted_clean_wavs = self._decode_latents(sampled_latents, normalized=True).audio_data
 
             if predicted_clean_wavs.shape[0] == 1:
                 predicted_clean_wavs = predicted_clean_wavs[0]

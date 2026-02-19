@@ -3,7 +3,7 @@
 #PBS -l walltime=48:00:00
 #PBS -j oe
 #PBS -k oed
-#PBS -W group_list=qgah50114
+#PBS -W group_list=qgah50068
 set -euo pipefail
 
 cd "${PBS_O_WORKDIR:-$(pwd)}"
