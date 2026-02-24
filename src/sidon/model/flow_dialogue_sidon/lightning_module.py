@@ -1,24 +1,23 @@
 from lightning import LightningModule
 from typing import Optional, Union
-from diffusers.models.modeling_outputs import Transformer2DModelOutput
 import itertools
+
 import hydra
 from lightning.pytorch import loggers
+from omegaconf import DictConfig
 import torchaudio
 import torch
-import diffusers
-from omegaconf import DictConfig
 import transformers
+from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.transformers.stable_audio_transformer import StableAudioDiTModel
 from torch import nn
+
+import audiotools
 import dac
-import flow_matching.path
-import flow_matching.path.scheduler
-from flow_matching.utils import ModelWrapper
 from sidon.model.losses import DACLoss, GANLoss
 from sidon.model.dialogue_sidion.audio import extract_seamless_m4t_features
-import flow_matching
-import audiotools
+
+
 class VAEBottleneck(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -333,178 +332,3 @@ class DitModel(StableAudioDiTModel):
             return (hidden_states,)
 
         return Transformer2DModelOutput(sample=hidden_states)
-
-class FlowDialogueLatentSidon(LightningModule):
-    def __init__(self, cfg:DictConfig):
-        super().__init__()
-        self.save_hyperparameters()
-        self.vae = SSLVAE.load_from_checkpoint(cfg.vae_checkpoint_path).eval()
-        self.flow_module = DitModel(**cfg.flow_model)
-        self.ssl_model = transformers.Wav2Vec2BertModel.from_pretrained(
-            cfg.ssl_model_name, num_hidden_layers=16, layerdrop=0.0
-        ).train()
-        self.path = flow_matching.path.AffineProbPath(flow_matching.path.scheduler.CondOTScheduler())
-        self.criterion = torch.nn.MSELoss()
-        for p in self.vae.parameters():
-            p.requires_grad = False
-        self.cfg = cfg
-
-    def on_fit_start(self) -> None:
-        torch.set_float32_matmul_precision("medium")
-
-    def transfer_batch_to_device(self, batch, device, dataloader_idx):
-        """Move only the tensors needed for the loss to the accelerator."""
-        keys = (
-            "noisy_16k_mixture",
-            "input_wav",
-        )
-
-        def _move(value):
-            if hasattr(value, "to"):
-                return value.to(device=device, non_blocking=True)
-            if isinstance(value, dict):
-                return {k: _move(v) for k, v in value.items()}
-            return value
-
-        for key in keys:
-            if key in batch:
-                batch[key] = _move(batch[key])
-        return batch
-    def get_features(self,batch):
-        clean_input_wavs = batch["input_wav"]
-
-        with torch.inference_mode():
-            clean_input_wavs = torchaudio.functional.resample(clean_input_wavs,batch['sr'], 16_000)
-            clean_ssl_inputs_0 = extract_seamless_m4t_features(
-                [torch.nn.functional.pad(0.9 * clean_input_wav[0].view(-1) / clean_input_wav[0].abs().max(),(160,160)) for clean_input_wav in clean_input_wavs],
-                device=str(self.device)
-            )
-            clean_ssl_inputs_1 = extract_seamless_m4t_features(
-                [torch.nn.functional.pad(0.9 * clean_input_wav[1].view(-1) / clean_input_wav[1].abs().max(),(160,160)) for clean_input_wav in clean_input_wavs],
-                device=str(self.device)
-            )
-            target_latent_0, _, _ , _ = self.vae.encode(clean_ssl_inputs_0)
-            target_latent_1, _, _ , _ = self.vae.encode(clean_ssl_inputs_1)
-        return target_latent_0, target_latent_1
-
-    def step(self, batch, batch_idx: int, stage: str = "train",log:bool=False):
-        noisy_16k_mixture = batch["noisy_16k_mixture"]
-        clean_input_wavs = batch["input_wav"]
-        batch_size = clean_input_wavs.size(0)
-
-        with torch.inference_mode():
-            noisy_ssl_inputs = extract_seamless_m4t_features(
-                [torch.nn.functional.pad(0.9 * noisy.view(-1) / noisy.abs().max(),(160,160)) for noisy in noisy_16k_mixture],
-                device=str(self.device)
-            )
-        target_latent_0, target_latent_1 = self.get_features(batch)
-        target_latent = torch.cat([target_latent_0,target_latent_1], dim=-1).transpose(1,2)
-        noise = torch.randn_like(target_latent,device=self.device)
-        t = torch.rand(batch_size,device=self.device)
-        path_sample = self.path.sample(t=t,x_0=noise,x_1=target_latent)
-        conditioning = self.ssl_model.forward(**{k:v.clone() for k,v in noisy_ssl_inputs.items()}).last_hidden_state
-
-        predicted_flow= self.flow_module.forward(
-            path_sample.x_t,
-            timestep=(t*1000.0),
-            encoder_hidden_states=conditioning,
-        ).sample 
-        loss = self.criterion.forward(predicted_flow,target=path_sample.dx_t)
-        return loss
-    def training_step(self, batch, batch_idx):
-        loss = self.step(batch, batch_idx, stage="train")
-        self.log('train/loss', loss)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        loss = self.step(batch, batch_idx, stage="val")
-
-        if batch_idx == 0 and self.global_rank == 0:
-            target_latent_0, target_latent_1 = self.get_features(batch)
-            target_wav_1 = self.vae.decoder.forward(target_latent_0.transpose(1,2))
-            target_wav_2 = self.vae.decoder.forward(target_latent_1.transpose(1,2))
-            wavs = torch.cat([target_wav_1,target_wav_2],dim=1)
-            for idx, wav in enumerate(wavs):
-                self.log_audio(
-                    wav.cpu(),
-                    f"val/resynth_{idx}",
-                    24_000,
-                )
-            sampled = self.sample(batch)
-            _,c,_ = sampled.shape
-            predicted_wav_1 = self.vae.decoder.forward(sampled[:,:(c//2),:])
-            predicted_wav_2 = self.vae.decoder.forward(sampled[:,(c//2):,:])
-            wavs = torch.cat([predicted_wav_1,predicted_wav_2],dim=1)
-            for idx, wav in enumerate(wavs):
-                self.log_audio(
-                    wav.cpu(),
-                    f"val/predicted_{idx}",
-                    24_000,
-                )
-            for idx, wav in enumerate(batch['noisy_mixture']):
-                self.log_audio(
-                    wav.cpu(),
-                    f'val/noisy_{idx}',
-                    24000
-                )
-        return loss
-    
-    @torch.inference_mode()
-    def sample(self, batch,n_steps:int=100):
-        noisy_16k_mixture = batch["noisy_16k_mixture"]
-        with torch.inference_mode():
-            noisy_ssl_inputs = extract_seamless_m4t_features(
-                [torch.nn.functional.pad(0.9 * noisy.view(-1) / noisy.abs().max(),(160,160)) for noisy in noisy_16k_mixture],
-                device=str(self.device)
-            )
-        
-        conditioning = self.ssl_model.forward(**{k:v.clone() for k,v in noisy_ssl_inputs.items()}).last_hidden_state
-        b,l,c = conditioning.shape
-        noise = torch.randn((b,self.vae.bottleneck.cfg.latent_dim*2,l),device=self.device)
-        timesteps = torch.linspace(0,1,n_steps+1,device=self.device)
-        deltas = torch.diff(timesteps)
-        x_t = noise.clone()
-
-        for time,delta in zip(timesteps[:-1],deltas):
-            x_t = x_t + self.flow_module.forward(
-                x_t,
-                time.repeat(b)*1000.0,
-                conditioning
-            ).sample * delta
-        return x_t
-            
-        
-
-
-
-
-    def configure_optimizers(self):  # type: ignore
-        opt = torch.optim.AdamW(
-            itertools.chain(
-                self.ssl_model.parameters(),
-                self.flow_module.parameters(),
-            ),
-            lr=self.cfg.optim.lr,
-            weight_decay=self.cfg.optim.weight_decay,
-        )
-        return opt
-
-
-
-    def log_audio(self, audio: torch.Tensor, name: str, sampling_rate: int) -> None:
-        audio = audio.float().cpu().numpy().T
-        for logger in self.loggers:
-            if isinstance(logger, loggers.WandbLogger):
-                import wandb
-
-                wandb.log(
-                    {name: wandb.Audio(audio, sample_rate=sampling_rate)},
-                    step=self.global_step,
-                )
-            elif isinstance(logger, loggers.TensorBoardLogger):
-                logger.experiment.add_audio(
-                    name,
-                    audio,
-                    self.global_step,
-                    sampling_rate,
-                )

@@ -17,6 +17,7 @@ dependencies = [
     "peft>=0.16.0",
     "pyroomacoustics",
     "silero-vad>=6.2.0",
+    "speechbrain>=1.0.3",
     "torch>=2.6.0",
     "torchaudio>=2.6.0",
     "transformers>=4.56.1",

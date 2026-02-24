@@ -1,9 +1,9 @@
 #!/bin/bash
-#PBS -l rt_QF=4
-#PBS -l walltime=72:00:00
+#PBS -l rt_QF=2
+#PBS -l walltime=48:00:00
 #PBS -j oe
 #PBS -k oed
-#PBS -W group_list=qgah50114
+#PBS -W group_list=qgah50068
 set -euo pipefail
 
 cd "${PBS_O_WORKDIR:-$(pwd)}"
@@ -28,7 +28,8 @@ num_gpus=$(nvidia-smi -L | wc -l)
 num_nodes=$(sort -u $PBS_NODEFILE | wc -l)
 #multiply num_nodes by num_procs to get total number of processes
 num_procs=$((num_nodes*num_gpus))
-export WANDB_NAME="dialogue_8_${PBS_JOBID}"
+BATCH_SIZE=${BATCH_SIZE:-8}
+export WANDB_NAME="diffusion_dialogue_sidon_vae_8"
 
 unset OMPI_MCA_mca_base_env_list
 mpirun  \
@@ -41,11 +42,12 @@ mpirun  \
      -np $num_procs -map-by ppr:$num_gpus:node -hostfile $PBS_NODEFILE \
     .venv/bin/python src/sidon/train.py \
   data=dialogue_preprocessed \
-  data.datamodule.batch_size=2 \
-  model=dialogue_sidon \
+  data.datamodule.batch_size=${BATCH_SIZE} \
+  model=diffusion_dialogue_sidon \
+  model.cfg.lora=true \
+  'model.cfg.vae_checkpoint_path="/home/qch10240fz/nakata/github.com/Sidon/sidon/dijjrajj/checkpoints/epoch=0-step=510000.ckpt"' \
   train=default \
   train.trainer.gradient_clip_val=null \
   train.trainer.precision=bf16-mixed \
   hydra.run.dir=./sidon_runs/${PBS_JOBID} \
   +train.trainer.num_nodes=$num_nodes +train.trainer.devices=$num_gpus \
-  "model.cfg.vae_checkpoint_path='/groups/qgah50114/nakata/github.com/Sidon/sidon/uj1p8zh1/checkpoints/epoch=0-step=510000.ckpt'"

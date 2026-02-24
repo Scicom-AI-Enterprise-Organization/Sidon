@@ -1,45 +1,15 @@
 #!/bin/bash
-#PBS -q debug-g
-#PBS -l select=16
-#PBS -W group_list=gj18
+#PBS -l rt_QF=2
+#PBS -l walltime=48:00:00
 #PBS -j oe
 #PBS -k oed
-_module_raw () {
-        eval "$(/usr/bin/tclsh '/usr/share/Modules/libexec/modulecmd.tcl' zsh "$@")"
-        _mlstatus=$? 
-        return $_mlstatus
-}
-
-module () {
-        local _mlredir=1 
-        if [ -n "${MODULES_REDIRECT_OUTPUT+x}" ]
-        then
-                if [ "$MODULES_REDIRECT_OUTPUT" = '0' ]
-                then
-                        _mlredir=0 
-                elif [ "$MODULES_REDIRECT_OUTPUT" = '1' ]
-                then
-                        _mlredir=1 
-                fi
-        fi
-        case " $@ " in
-                (*' --no-redirect '*) _mlredir=0  ;;
-                (*' --redirect '*) _mlredir=1  ;;
-        esac
-        if [ $_mlredir -eq 0 ]
-        then
-                _module_raw "$@"
-        else
-                _module_raw "$@" 2>&1
-        fi
-}
+#PBS -W group_list=qgah50068
 set -euo pipefail
-module purge
-module load gcc
-module load ompi
 
 cd "${PBS_O_WORKDIR:-$(pwd)}"
+source /etc/profile.d/modules.sh
 
+module load hpc_sdk/24.9 nvhpc-hpcx-cuda12/24.9
 export PATH="/work/gj18/e43001/miniconda3/bin/:$PATH"
 export LD_LIBRARY_PATH="/work/gj18/e43001/miniconda3/lib/"
 export MAIN_ADDR="$(hostname)"
@@ -58,6 +28,8 @@ num_gpus=$(nvidia-smi -L | wc -l)
 num_nodes=$(sort -u $PBS_NODEFILE | wc -l)
 #multiply num_nodes by num_procs to get total number of processes
 num_procs=$((num_nodes*num_gpus))
+BATCH_SIZE=${BATCH_SIZE:-8}
+export WANDB_NAME="diffusion_dialogue_sidon_vae_64"
 
 unset OMPI_MCA_mca_base_env_list
 mpirun  \
@@ -70,11 +42,12 @@ mpirun  \
      -np $num_procs -map-by ppr:$num_gpus:node -hostfile $PBS_NODEFILE \
     .venv/bin/python src/sidon/train.py \
   data=dialogue_preprocessed \
-  data.datamodule.batch_size=8 \
-  model=dialogue_sidon_feature_predictor \
+  data.datamodule.batch_size=${BATCH_SIZE} \
+  model=diffusion_dialogue_sidon \
+  model.cfg.lora=true \
+  'model.cfg.vae_checkpoint_path="/home/qch10240fz/nakata/github.com/Sidon/sidon/403yci01/checkpoints/epoch=0-step=510000.ckpt"' \
   train=default \
-  train.trainer.gradient_clip_val=1.0 \
+  train.trainer.gradient_clip_val=null \
   train.trainer.precision=bf16-mixed \
   hydra.run.dir=./sidon_runs/${PBS_JOBID} \
   +train.trainer.num_nodes=$num_nodes +train.trainer.devices=$num_gpus \
-#  'train.ckpt_path="/work/gj18/e43001/github.com/Sidon/sidon/wvcbo1ox/checkpoints/epoch=1-step=247668.ckpt"'
