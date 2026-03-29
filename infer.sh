@@ -5,10 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 INFER_PY="${INFER_PY:-$ROOT_DIR/infer.py}"
 
-INPUT_DIR="${INPUT_DIR:-/home/qch10240fz/nakata/github.com/sidon_eval/test_set_switchboard}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-/home/qch10240fz/nakata/github.com/sidon_eval/results_swb}"
+INPUT_DIR="${INPUT_DIR:-/home/qch10240fz/nakata/github.com/sidon_eval/test_set_opendialog/}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-/home/qch10240fz/nakata/github.com/sidon_eval/results_opendialog}"
 DEVICE="${DEVICE:-cuda:0}"
-NUM_STEPS="${NUM_STEPS:-100}"
+NUM_STEPS="${NUM_STEPS:-30}"
 LATENT_SIZES_CSV="${LATENT_SIZES_CSV:-8,16,32,64,128}"
 
 declare -A CHECKPOINT_BY_LATENT=(

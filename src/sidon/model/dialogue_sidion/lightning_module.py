@@ -10,6 +10,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint
 import torchaudio
 import transformers
 from diffusers import DDPMScheduler, DPMSolverMultistepScheduler
@@ -180,9 +181,11 @@ class DiffusionTransformerHead(nn.Module):
         ffn_ratio: float = 4.0,
         dropout: float = 0.0,
         use_positional: bool = True,
+        activation_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         self.use_positional = use_positional
+        self.activation_checkpointing = activation_checkpointing
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.latent_proj = nn.Linear(latent_size, hidden_size, bias=False)
         self.cond_proj = nn.Linear(cond_size, hidden_size, bias=False)
@@ -222,7 +225,10 @@ class DiffusionTransformerHead(nn.Module):
         t_embed = self.t_embedder(timesteps).unsqueeze(1).expand(batch_size, seq_len, -1)
         c = self.cond_proj(conditioning) + t_embed
         for block in self.blocks:
-            x = block(x, c)
+            if self.activation_checkpointing and self.training:
+                x = torch.utils.checkpoint.checkpoint(block, x, c, use_reentrant=False)
+            else:
+                x = block(x, c)
         return self.final_layer(x, c)
 
 
@@ -290,7 +296,12 @@ class DialogueSidonDiffusionLightningModule(LightningModule):
             ffn_ratio=diffusion_head_cfg.get("head_ffn_ratio", 4.0),
             dropout=diffusion_head_cfg.get("dropout", 0.0),
             use_positional=diffusion_head_cfg.get("use_positional", False),
+            activation_checkpointing=cfg.get("activation_checkpointing", False),
         )
+        if cfg.get("activation_checkpointing", False):
+            self.student_ssl_model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
         diffusion_cfg = cfg.get("diffusion", {})
         num_train_steps = diffusion_cfg.get("num_train_timesteps", 1000)
         prediction_type = diffusion_cfg.get("prediction_type", "epsilon")

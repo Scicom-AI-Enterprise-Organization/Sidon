@@ -11,11 +11,16 @@
 
 import math
 
-import mmdit
-import mmdit.mmdit_generalized_pytorch
 import torch
 import torch.nn as nn
 
+try:
+    import mmdit.mmdit_generalized_pytorch as mmdit_impl
+except ImportError as error:  # pragma: no cover - depends on optional runtime package
+    mmdit_impl = None
+    _MMDIT_IMPORT_ERROR = error
+else:
+    _MMDIT_IMPORT_ERROR = None
 
 class TimestepEmbedder(nn.Module):
     """
@@ -77,6 +82,11 @@ class MMDiT(nn.Module):
         heads: int,
     ) -> None:
         super(MMDiT, self).__init__()
+        if mmdit_impl is None:
+            raise ImportError(
+                "mmdit is required for sidon.model.geneses.components.MMDiT. "
+                "Install the mmdit package in your environment."
+            ) from _MMDIT_IMPORT_ERROR
 
         self.t_embedder = TimestepEmbedder(hidden_size)
 
@@ -94,7 +104,7 @@ class MMDiT(nn.Module):
             torch.zeros(1, max_seq_len, hidden_size), requires_grad=False
         )
 
-        self.mmdit = mmdit.mmdit_generalized_pytorch.MMDiT(
+        self.mmdit = mmdit_impl.MMDiT(
             depth=depth,
             dim_modalities=(hidden_size, hidden_size, hidden_size),
             dim_cond=hidden_size,
