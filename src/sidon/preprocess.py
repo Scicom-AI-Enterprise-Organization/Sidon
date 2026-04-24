@@ -91,8 +91,6 @@ def instantiate_datamodule(cfg: DictConfig) -> WebDatasetDataModule:
 @hydra.main(config_path="../../config", config_name="preprocess", version_base=None)
 def main(cfg: DictConfig) -> None:
     """Entry point for generating preprocessed WebDataset shards."""
-    if cfg.get("seed") is not None:
-        seed_everything(cfg.seed, workers=True)
 
     datamodule = instantiate_datamodule(cfg)
     job_id = os.getenv("PBS_JOBID", "local_run")

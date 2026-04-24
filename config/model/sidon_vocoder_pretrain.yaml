@@ -4,15 +4,8 @@ lightning_module:
 
 cfg:
   ssl_model_name: facebook/w2v-bert-2.0
-  sample_rate: 24000
+  sample_rate: 48000
   pretraining: True
-
-  vocos:
-    dim: 1024
-    intermediate_dim: 1536
-    n_layers: 8
-    n_fft: 1920
-    hop_length: 480
 
   dac_loss:
     stft_loss:

@@ -1,7 +1,7 @@
 #!/bin/sh
 #PBS -q rt_HC
 #PBS -l select=1
-#PBS -l walltime=12:00:00
+#PBS -l walltime=48:00:00
 #PBS -P gag51394
 #PBS -j oe
 #PBS -k oed

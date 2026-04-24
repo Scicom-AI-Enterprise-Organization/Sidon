@@ -105,7 +105,7 @@ class SidonLightningModule(LightningModule):
         self.save_hyperparameters()
         if cfg.pretraining:
             self.student_ssl_model = transformers.Wav2Vec2BertModel.from_pretrained(
-                cfg.ssl_model_name, num_hidden_layers=8
+                cfg.ssl_model_name, num_hidden_layers=cfg.get("student_layer",8)
             ).eval()
         else:
             self.student_ssl_model = (

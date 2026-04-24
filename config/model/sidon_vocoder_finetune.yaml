@@ -4,16 +4,9 @@ lightning_module:
 
 cfg:
   ssl_model_name: # path to feature predictor checkpoint
-  sample_rate: 24000
+  sample_rate: 48000
   pretraining: false
-
-
-  vocos:
-    dim: 1024
-    intermediate_dim: 1536
-    n_layers: 8
-    n_fft: 1920
-    hop_length: 480
+  pretrain_path: null
 
   dac_loss:
     stft_loss:

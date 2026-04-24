@@ -14,8 +14,6 @@ from omegaconf import DictConfig, OmegaConf
 def main(cfg: DictConfig) -> None:
     torch.set_float32_matmul_precision("medium")
     """Instantiate datamodule and model from config and launch training."""
-    if cfg.get("seed") is not None:
-        seed_everything(cfg.seed, workers=True)
 
     datamodule = hydra.utils.instantiate(cfg.data.datamodule)
     lightning_module = hydra.utils.instantiate(
@@ -32,9 +30,7 @@ def main(cfg: DictConfig) -> None:
     ]
     logger = hydra.utils.instantiate(cfg.train.logger)
 
-    trainer_kwargs: Dict[str, Any] = OmegaConf.to_container(
-        cfg.train.get("trainer", {}), resolve=True
-    ) or {}
+    trainer_kwargs: Dict[str, Any] = hydra.utils.instantiate(cfg.train.trainer)
     trainer = Trainer(logger=logger, callbacks=callbacks, **trainer_kwargs)
 
     ckpt_path = cfg.train.get("ckpt_path")

@@ -24,3 +24,4 @@ datamodule:
   use_pra: true
   n_repeats: 1
   split_by_worker: true
+  add_squim_sdr: true

@@ -1,8 +1,8 @@
 #!/bin/sh
-#PBS -q rt_HC
-#PBS -l select=1:ncpus=16:ngpus=1:mem=64gb
+#PBS -q regular-g
+#PBS -l select=1
 #PBS -l walltime=48:00:00
-#PBS -P gag51394
+#PBS -W group_list=gj18
 #PBS -j oe
 #PBS -k oed
 

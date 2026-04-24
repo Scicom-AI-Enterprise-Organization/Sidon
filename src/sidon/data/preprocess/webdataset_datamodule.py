@@ -1,6 +1,7 @@
 import pathlib
 from functools import partial
 from typing import List, Optional, Sequence
+from torchaudio.pipelines import SQUIM_OBJECTIVE
 
 import torch
 import torchaudio
@@ -26,7 +27,7 @@ def resample(sample, target_sr, input_key: str, output_key: str):
     x, sr = sample[input_key]
     if sr != target_sr:
         x = torchaudio.functional.resample(x, sr, target_sr)
-    sample[output_key] = (x.view(1, -1), target_sr)
+    sample[output_key] = (x, target_sr)
     return sample
 
 
@@ -44,7 +45,7 @@ def lowcut(sample, input_key: str, cutoff=50):
     wav, sr = sample[input_key]
     wav = torchaudio.functional.highpass_biquad(wav, sr, cutoff)
     new_sample = sample.copy()
-    new_sample[input_key] = (wav.view(1, -1), sr)
+    new_sample[input_key] = (wav, sr)
     return new_sample
 
 
@@ -70,6 +71,10 @@ def get_urls(path: pathlib.Path) -> List[str]:
 
 def normalize(sample, input_key: str, output_key: str):
     wav, sr = sample[input_key]
+    wav = wav.clone()
+    if wav.shape[0] == 2: # if stereo
+        wav[0] = (wav[0] / wav[0].abs().max() + 1e-7) * 0.9
+        wav[1] = (wav[1] / wav[1].abs().max() + 1e-7) * 0.9
     wav = (wav / wav.abs().max() + 1e-7) * 0.9
     new_sample = sample.copy()
     new_sample[output_key] = (wav, sr)
@@ -103,9 +108,10 @@ def merge_samples_to_target_length(samples, seconds, audio_keys):
             outputs = dict()
             for key in audio_keys:
                 sr = output_samples[0][key][1]
+
                 outputs[key] = (
                     torch.cat(
-                        [x[key][0] for x in output_samples],
+                        [x[key][0].view(1,-1) for x in output_samples],
                         dim=-1,
                     )[:, : int(seconds * sr)],
                     sr,
@@ -113,6 +119,18 @@ def merge_samples_to_target_length(samples, seconds, audio_keys):
             outputs["__key__"] = output_samples[0]["__key__"]
             output_samples = []
             yield outputs
+def get_squim_score(sample, model,key,channel):
+    wav,sr = sample[key]
+    stoi, pesq, sisdr = model(wav.view(1,-1))
+    sample['stoi'] = stoi.item()
+    sample['pesq'] = pesq.item()
+    sample['sisdr'] = sisdr.item()
+    return sample
+def to_mono(sample, key):
+    wav, sr = sample[key]
+    sample[key] = (torch.mean(wav,0).unsqueeze(0), sr)
+    return sample
+    
 
 
 class WebDatasetDataModule(LightningDataModule):
@@ -134,6 +152,7 @@ class WebDatasetDataModule(LightningDataModule):
         val_num_workers: int = 0,
         use_pra=False,
         split_by_worker=False,
+        add_squim_sdr=False,
     ):
         super().__init__()
         self.train_wds_patterns = glob_wds(train_wds_patterns)
@@ -159,7 +178,9 @@ class WebDatasetDataModule(LightningDataModule):
         # WebDataset expects a callable splitter; accept a bool for convenience.
         self.split_by_worker = split_by_worker
         self.workersplitter = wds.split_by_worker if split_by_worker else False
-
+        self.add_squim_sdr = add_squim_sdr
+        if add_squim_sdr:
+            self.squim_model = SQUIM_OBJECTIVE.get_model()
     def train_dataloader(self) -> wds.WebLoader:
         def identity(x):
             return x[0]
@@ -170,7 +191,6 @@ class WebDatasetDataModule(LightningDataModule):
             collate_fn=identity,
             pin_memory=True,
             drop_last=True,
-            prefetch_factor=4,
         )
 
     def setup(self, stage: Optional[str] = None):
@@ -186,6 +206,7 @@ class WebDatasetDataModule(LightningDataModule):
             .repeat(self.n_repeats)
             .decode(wds.autodecode.basichandlers, torch_audio)
             .map(partial(rename_audio, output_key="audio"))
+            .map(partial(to_mono,key='audio'))
             .map(partial(lowcut, input_key="audio", cutoff=50))
             .compose(
                 partial(
@@ -212,6 +233,7 @@ class WebDatasetDataModule(LightningDataModule):
             .repeat(self.n_repeats)
             .decode(wds.autodecode.basichandlers, torch_audio)
             .map(partial(rename_audio, output_key="audio"))
+            .map(partial(to_mono,key='audio'))
             .map(partial(lowcut, input_key="audio", cutoff=50))
             .compose(
                 partial(
@@ -229,6 +251,8 @@ class WebDatasetDataModule(LightningDataModule):
             self.train_dataset = self.add_noise_pipeline(self.train_dataset)
             self.val_dataset = self.add_noise_pipeline(self.val_dataset)
         self.train_dataset = self.add_resample_pipeline(self.train_dataset)
+        if self.add_squim_sdr:
+            self.train_dataset = self.train_dataset.map(partial(get_squim_score,key='clean_16k', model=self.squim_model,channel=0)).select(lambda x:x['sisdr'] > 20.0)
         self.train_dataset = (
             self.train_dataset.compose(skip_nan)
             .map(partial(normalize, input_key="clean", output_key="clean"))
@@ -248,6 +272,8 @@ class WebDatasetDataModule(LightningDataModule):
             self.batch_size, collation_fn=self.collate_fn
         )
         self.val_dataset = self.add_resample_pipeline(self.val_dataset)
+        if self.add_squim_sdr:
+            self.val_dataset = self.val_dataset.map(partial(get_squim_score,key='clean_16k', model=self.squim_model,channel=0)).select(lambda x:x['sisdr'] > 20.0)
         self.val_dataset = (
             self.val_dataset.compose(skip_nan)
             .map(partial(normalize, input_key="clean", output_key="clean"))
@@ -504,127 +530,3 @@ class WebDatasetDataModule(LightningDataModule):
 
         return sample
 
-
-class PreprocessedDataModule(LightningDataModule):
-    def __init__(
-        self,
-        train_urls: Sequence[str] | str,
-        val_urls: Sequence[str] | str,
-        batch_size: int,
-        train_num_workers: int = 0,
-        val_num_workers: int = 0,
-        preprocessed: bool = True,
-        is_s3: bool = False,
-    ):
-        super().__init__()
-        self.batch_size = batch_size
-        if is_s3:
-            self.train_urls = get_urls(train_urls)
-            self.val_urls = get_urls(val_urls)
-        else:
-            self.train_urls = glob_wds(train_urls)
-            self.val_urls = glob_wds(val_urls)
-        self.train_num_workers = train_num_workers
-        self.val_num_workers = val_num_workers
-
-    def setup(self, stage: str = "fit") -> None:
-        self.train_dataset = (
-            wds.WebDataset(
-                self.train_urls,
-                shardshuffle=True,
-                nodesplitter=lambda x: x,  # no split
-                workersplitter=True,  # no split
-                repeat=True,
-                empty_check=True,
-                handler=wds.warn_and_continue,
-            )
-            .decode(
-                wds.autodecode.basichandlers, torch_audio, handler=wds.warn_and_continue
-            )
-            .shuffle(1000)
-            .batched(self.batch_size, collation_fn=self.collate_fn)
-        )
-        self.val_dataset = (
-            wds.WebDataset(
-                self.val_urls,
-                shardshuffle=True,
-                nodesplitter=lambda x: x,  # no split
-                workersplitter=True,  # no split
-                repeat=True,
-                empty_check=True,
-                handler=wds.warn_and_continue,
-            )
-            .decode(
-                wds.autodecode.basichandlers, torch_audio, handler=wds.warn_and_continue
-            )
-            .batched(8, collation_fn=self.collate_fn)
-        )
-
-    def train_dataloader(self) -> wds.WebLoader:
-        def identity(x):
-            return x[0]
-
-        return wds.WebLoader(
-            self.train_dataset,
-            num_workers=self.train_num_workers,
-            collate_fn=identity,
-            drop_last=True,
-        )
-
-    def val_dataloader(self) -> wds.WebLoader:
-        def identity(x):
-            return x[0]
-
-        return wds.WebLoader(
-            self.val_dataset,
-            num_workers=self.val_num_workers,
-            collate_fn=identity,
-            drop_last=True,
-        )
-
-    def collate_fn(
-        self,
-        samples: list[dict[str, torch.Tensor]],
-    ) -> dict[str, torch.Tensor | int | list[torch.Tensor]]:
-        output_sample = {
-            "input_wav": torch.stack(
-                [sample["input_wav.pth"].view(-1) for sample in samples]
-            ),
-            "noisy_input_wav": torch.stack(
-                [sample["noisy_input_wav.pth"].view(-1) for sample in samples]
-            ),
-            "input_wav_lens": torch.tensor(
-                [sample["input_wav.pth"].view(-1).size(-1) for sample in samples],
-                dtype=torch.long,
-            ),
-            "sr": samples[0]["sr.index"],
-            "names": [x["__key__"] for x in samples],
-        }
-        ssl_inputs_dict = {}
-
-        for k, v in samples[0]["ssl_inputs.pickle"].items():
-            ssl_inputs_dict[k] = []
-
-        for sample in samples:
-            if "ssl_inputs.pickle" in sample:
-                ssl_inputs = sample["ssl_inputs.pickle"]
-                for key, value in ssl_inputs.items():
-                    ssl_inputs_dict[key].append(value[0])
-        for key, value in ssl_inputs_dict.items():
-            ssl_inputs_dict[key] = torch.stack(value)
-        noisy_ssl_inputs_dict = {}
-        if "noisy_ssl_inputs.pickle" in samples[0]:
-            for k, v in samples[0]["noisy_ssl_inputs.pickle"].items():
-                noisy_ssl_inputs_dict[k] = []
-
-            for sample in samples:
-                if "noisy_ssl_inputs.pickle" in sample:
-                    noisy_ssl_inputs = sample["noisy_ssl_inputs.pickle"]
-                    for key, value in noisy_ssl_inputs.items():
-                        noisy_ssl_inputs_dict[key].append(value[0])
-            for key, value in noisy_ssl_inputs_dict.items():
-                noisy_ssl_inputs_dict[key] = torch.stack(value)
-        output_sample["ssl_inputs"] = ssl_inputs_dict
-        output_sample["noisy_ssl_inputs"] = noisy_ssl_inputs_dict
-
-        return output_sample

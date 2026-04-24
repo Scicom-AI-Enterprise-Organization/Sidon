@@ -1,12 +1,22 @@
 # Sidon
-[![ArXiv](https://img.shields.io/badge/arXiv-2509.17052-b31b1b.svg)](https://arxiv.org/abs/2509.17052)
-[![Gradio Demo](https://img.shields.io/badge/Gradio-demo-orange.svg)](https://huggingface.co/spaces/sarulab-speech/sidon_demo_beta)
+[![Sidon arXiv](https://img.shields.io/badge/Sidon-arXiv%202509.17052-b31b1b.svg)](https://arxiv.org/abs/2509.17052)
+[![DialogueSidon arXiv](https://img.shields.io/badge/DialogueSidon-arXiv%202604.09344-b31b1b.svg)](https://arxiv.org/abs/2604.09344)
+[![Sidon Gradio Demo](https://img.shields.io/badge/Sidon-Gradio%20demo-orange.svg)](https://huggingface.co/spaces/sarulab-speech/sidon_demo_beta)
+[![DialogueSidon Gradio Demo](https://img.shields.io/badge/DialogueSidon-Gradio%20demo-orange.svg)](https://huggingface.co/spaces/sarulab-speech/DialogueSidon-demo)
 [![Hugging Face](https://img.shields.io/badge/Hugging%20Face-demo)](https://huggingface.co/spaces/Wataru/SidonSamples)
 
 
 Large-scale text-to-speech (TTS) systems are bottlenecked by the scarcity of clean, multilingual recordings. Sidon tackles this by pairing a fast, open-source speech restoration model with reproducible tooling so researchers can turn noisy in-the-wild corpora into studio-quality datasets that scale across dozens of languages.
 
 Sidon consists of two stages: a w2v-BERT 2.0 feature predictor finetuned to cleanse representations from degraded speech, and a vocoder trained to synthesise restored waveforms from those features. The stack achieves restoration quality comparable to Miipher—Google's internal speech restoration pipeline—while running up to 500× faster than real time on a single GPU. We also observe that training downstream TTS models on Sidon-cleansed automatic speech recognition corpora improves zero-shot synthesis quality. This repository releases the code, configs, and models needed to reproduce Sidon's dataset cleansing workflow for the community.
+
+This repository ships two models:
+
+- **Sidon** ([arXiv:2509.17052](https://arxiv.org/abs/2509.17052)) — the
+  single-speaker speech restoration pipeline described above.
+- **DialogueSidon** ([arXiv:2604.09344](https://arxiv.org/abs/2604.09344)) — a
+  diffusion-based two-speaker dialogue separator that reuses the Sidon
+  backbone. See the [DialogueSidon section](#dialoguesidon--diffusion-based-dialogue-separation).
 
 ## Requirements
 
@@ -123,6 +133,106 @@ Sidon training runs in three sequential stages. Every invocation of
 
 Adjust optimiser, scheduler, or trainer parameters via the files in
 `config/model/` and `config/train/`, and use `train.ckpt_path` to resume a run.
+
+## DialogueSidon — diffusion-based dialogue separation
+
+Full-duplex dialogue audio, in which each speaker is recorded on a separate track, is an important resource for spoken dialogue research, but is difficult to collect at scale. Most in-the-wild two-speaker dialogue is available only as degraded monaural mixtures, making it unsuitable for systems requiring clean speaker-wise signals. We propose DialogueSidon, a model for joint restoration and separation of degraded monaural two-speaker dialogue audio. DialogueSidon combines a variational autoencoder (VAE) operates on the speech self-supervised learning (SSL) model feature, which compresses SSL model features into a compact latent space, with a diffusion-based latent predictor that recovers speaker-wise latent representations from the degraded mixture. Experiments on English, multilingual, and in-the-wild dialogue datasets show that DialogueSidon substantially improves intelligibility and separation quality over a baseline, while also achieving much faster inference.
+
+This repository implements DialogueSidon on top of the Sidon feature backbone:
+a diffusion transformer head predicts per-speaker latents over a frozen
+SSL-VAE, conditioned on features from a LoRA-adapted w2v-BERT encoder.
+
+### Architecture
+
+- **SSL encoder** — a LoRA-adapted `facebook/w2v-bert-2.0` student encodes the
+  noisy mixture into frame-level features.
+- **SSL-VAE** — a pretrained `SSLVAE` (loaded from `cfg.vae_checkpoint_path`)
+  provides the target latents; its weights are frozen during training.
+- **Conditioning heads** — two linear projections (`output_linear1`,
+  `output_linear2`) map SSL features to per-speaker VAE latents used as a
+  conditioning signal.
+- **Diffusion transformer head** — a DiT with AdaLN conditioning, RoPE
+  attention, and sinusoidal timestep embeddings predicts the noise (or `v`
+  target) for the concatenated two-speaker latents.
+- **DDPM training** — noise is sampled with a `DDPMScheduler`
+  (`prediction_type=v_prediction` by default, 1000 training timesteps). Speaker
+  assignment is resolved with Permutation-Invariant Training on the
+  conditioning heads.
+- **Latent normalisation** — running mean/std buffers are initialised from the
+  first training batch and re-used at inference to stabilise diffusion.
+
+The matching inference script is `infer.py` (not `infer_geneses.py`, which is
+reserved for the flow-matching GENESES separator).
+
+### Model variants
+
+Available under `config/model/`:
+
+| Config | Head hidden | Head layers | Heads | Notes |
+|---|---|---|---|---|
+| `diffusion_dialogue_sidon` | 768 | 8 | 12 | default |
+| `diffusion_dialogue_sidon_small` | 384 | 12 | 6 | small |
+| `diffusion_dialogue_sidon_xsmall` | 384 | 6 | 6 | xsmall |
+| `diffusion_dialogue_sidon_ac` | 768 | 8 | 12 | activation checkpointing |
+| `diffusion_dialogue_sidon_wo_diffusion_head` | — | — | — | baseline without diffusion head |
+| `diffusion_dialogue_sidon_wo_vae_latent` | 768 | 8 | 12 | ablation without VAE latent conditioning |
+| `diffusion_dialogue_sidon_decoder_finetune` | — | — | — | decoder finetuning stage |
+
+### Training
+
+DialogueSidon requires a pretrained **SSL-VAE** checkpoint. Train it first
+with `model=ssl_vae`, then pass the resulting checkpoint into the diffusion
+run via `model.cfg.vae_checkpoint_path`.
+
+1. **SSL-VAE pretraining** — learns the latent space that the diffusion head
+   will predict over.
+
+   ```bash
+   uv run python -m sidon.train \
+     model=ssl_vae \
+     data=dialogue_preprocessed
+   ```
+
+2. **Diffusion training** — point `model.cfg.vae_checkpoint_path` at the
+   SSL-VAE checkpoint from step 1.
+
+   ```bash
+   uv run python -m sidon.train \
+     model=diffusion_dialogue_sidon \
+     data=dialogue_preprocessed \
+     model.cfg.vae_checkpoint_path=/path/to/ssl_vae.ckpt
+   ```
+
+PBS templates for each variant are provided in
+`scripts/pbs/diffusion_dialogue_sidon*.sh`.
+
+### Inference
+
+`infer.py` runs chunked inference with overlap, resolves speaker permutation
+across chunks by cosine similarity in VAE latent space, concatenates the
+per-chunk latents, and performs a single VAE decode at the end.
+
+```bash
+# Batch mode — directory of wav files
+python infer.py \
+  --checkpoint sidon/<run_id> \
+  --input-dir ./wavs \
+  --output-dir ./out \
+  --device cuda:0 \
+  --num-steps 30 \
+  --chunk-seconds 20 \
+  --overlap-seconds 5
+
+# Single audio or video file (replaces the audio track when given a video)
+python infer.py \
+  --checkpoint sidon/<run_id> \
+  --input-video input.mp4 \
+  --output-wav separated.wav \
+  --output-video output.mp4
+```
+
+Use `scripts/pbs/infer_dialogue.sh` to submit the same job on an `rt_QG` (single
+GPU) PBS queue.
 
 ## Validation and troubleshooting
 
