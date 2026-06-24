@@ -6,110 +6,166 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Sidon is a speech restoration research system. It pairs a LoRA-adapted w2v-BERT 2.0 feature predictor with a DAC-based vocoder to restore degraded speech. A separate branch (`dialogue`) extends the system with **GENESES** — a flow-matching two-speaker dialogue separator built on MMDiT + DACVAE.
 
+> **Active task in this checkout:** a **RunPod dry-run finetune** that *continues from the
+> released `sarulab-speech/sidon-v0.1` weights* on the Singaporean-podcast dataset (the same
+> data source as `../neucodec-44k`), on **1× H100**, with everything under `/` (never the slow
+> `/workspace` network volume). All of that lives in `runpod/` + `config/data/sg_podcast_online_48k.yaml`
+> and is documented under "RunPod dry-run" below.
+
 ## Environment Setup
 
 ```bash
-uv sync               # install all dependencies
+uv sync               # install all dependencies (full env incl. GENESES deps)
 python -m compileall src   # quick syntax sweep before submitting cluster jobs
 ```
 
-The project uses `uv` for dependency management (Python 3.10+, PyTorch 2.6+, CUDA required). A `.venv/` is present in the repo root.
+The project uses `uv` for dependency management (Python 3.10+, PyTorch 2.6+, CUDA required).
+
+> The RunPod dry-run does **not** `uv sync`. It builds a *targeted* venv (`runpod/bootstrap.sh`)
+> that skips `flash-attn` / `mmdit` / `flow-matching` / `diffusers` / `ray` — those are only needed
+> for the GENESES *dialogue* path, and flash-attn's source build is slow/fragile. The single-speaker
+> restoration pipeline (feature predictor + DAC vocoder) only needs the subset that bootstrap installs.
 
 ## Common Commands
 
-### Training
+### Training (canonical, cluster)
 ```bash
-# Feature predictor pretraining (stage 1)
-uv run python -m sidon.train model=sidon_feature_predictor data=preprocessed
-
-# Vocoder pretraining (stage 2)
-uv run python -m sidon.train model=sidon_vocoder_pretrain data=preprocessed
-
-# Vocoder finetuning (stage 3)
-uv run python -m sidon.train model=sidon_vocoder_finetune data=preprocessed_48k \
+uv run python -m sidon.train model=sidon_feature_predictor data=preprocessed      # stage 1
+uv run python -m sidon.train model=sidon_vocoder_pretrain  data=preprocessed      # stage 2
+uv run python -m sidon.train model=sidon_vocoder_finetune  data=preprocessed_48k \ # stage 3
   model.cfg.ssl_model_name=/path/to/feature_predictor.ckpt \
   model.cfg.pretrain_path=/path/to/vocoder_pretrain.ckpt
-
-# GENESES dialogue separation
-uv run python -m sidon.train model=geneses_dialogue data=dialogue_preprocessed
-
-# Resume from checkpoint
-uv run python -m sidon.train ... train.ckpt_path=/path/to/last.ckpt
+uv run python -m sidon.train model=geneses_dialogue data=dialogue_preprocessed    # GENESES
+uv run python -m sidon.train ... train.ckpt_path=/path/to/last.ckpt               # resume
 ```
 
 ### Preprocessing (generate WebDataset shards)
 ```bash
-uv run python -m sidon.preprocess \
-  data=webdataset_preprocess_24k \
-  preprocess.writer_name=my_preprocessed_run
+uv run python -m sidon.preprocess data=webdataset_preprocess_24k preprocess.writer_name=my_run
 ```
 
-Hydra writes run artifacts under `outputs/<timestamped_run>/` and shards into `${preprocess.output_root}/{writer_name}/{split}/{job_id}/`.
+## RunPod dry-run (continue-finetune from sidon-v0.1)
 
-### Inference (GENESES)
+**Goal:** prove the restoration training loop runs end-to-end on 1× H100, continued from the released
+model, on a small slice of sg-podcast (same dataset source as `../neucodec-44k`). *"At least we have
+something."* **Status: verified working** — 20 steps run, mel + adversarial losses backprop, a 52.4M-param
+DAC decoder is trained and saved (`~0.75 s/step`).
+
+**The released-weights reality (important).** `sarulab-speech/sidon-v0.1` ships `feature_extractor_{cpu,cuda}.pt`
+(~795 MB) and `decoder_{cpu,cuda}.pt` (~210 MB), and **both are frozen TorchScript** — `state_dict`,
+`named_parameters`, and `named_buffers` are all **empty**; the weights are inlined into the forward graph
+as constants. So they **cannot be loaded back into the trainable Sidon `nn.Module`s** for a real
+weight-resume. `runpod/build_ckpt_from_hf.py` demonstrates this and **refuses** to write a random-init
+checkpoint (`0 keys matched`); `runpod/inspect_v01.py` / `inspect_v01b.py` probe the modules
+(FE forward: `forward(input_features[B,T,160]) -> Dict[str,Tensor]`; decoder: `forward(x[B,1024,T]) -> wav`).
+
+**What "continue from v0.1" therefore means here.** Keep v0.1's **frozen feature extractor** (it's used
+frozen in stage-3 finetuning anyway — it's the 8-layer w2v-BERT+LoRA restoration "brain") and train a
+**fresh DAC decoder + GAN** on top of its features. That is `runpod/dryrun_v01_direct.py`:
+
+```
+random mp3 window --(degrade)--> noisy 16k --(w2v-bert FE)--> input_features[160]
+      --(frozen v0.1 FE, TorchScript)--> SSL features [T,1024]
+      --(TRAINABLE DAC decoder)--------> 48 kHz waveform
+loss = DAC multi-res mel + adversarial/feature-matching vs the clean window.
+```
+
+48 kHz because the released decoder is a 48 kHz model (hop `8·5·4·3·2 = 960` × 50 fps = 48 000). GENESES
+(two-speaker dialogue) is excluded — sg-podcast is single-speaker.
+
+**Direct dataloader, NOT WebDataset.** Sidon's normal pipeline trains from WebDataset `.tar` shards
+(`sidon.data.preprocess.WebDatasetDataModule`, online degradation). For this dry run we skip all packing:
+`dryrun_v01_direct.py` has a small `IterableDataset` that reads random windows **straight from the
+extracted mp3s** via `ffmpeg -ss/-t` (long podcasts are never fully decoded), degrades in-process, and
+runs the w2v-BERT feature extractor in `collate`. A manual training loop (no Lightning) keeps the dry run
+free of the cluster-specific Trainer config. *(Packing mp3s into shards is fragile: ffmpeg's segment muxer
+produces FLAC/WAV that libsndfile can't seek from a BytesIO → `psf_fseek failed`; if you ever do pack,
+decode to one file then re-encode chunks via `soundfile`.)*
+
 ```bash
-# Batch mode (directory of wav files)
-python infer_geneses.py --input-dir ./wavs --checkpoint ./ckpt --output-dir ./out \
-  --num-steps 100 --chunk-seconds 20 --overlap-seconds 1
+# 0. secrets in .env: RUNPOD_API_KEY, HF_TOKEN, WANDB_API_KEY (rsync'd to the pod)
+# 1. provision 1x H100 SECURE, 500GB CONTAINER disk (mounted at /, volumeInGb=0 => no /workspace)
+python3 runpod/launch_pod.py launch         # waits for RUNNING + SSH, caches runpod/pod.json
+python3 runpod/launch_pod.py status         # status + ssh endpoint
+python3 runpod/launch_pod.py terminate      # tear it down (STOP THE BILL)
 
-# Single video/audio file
-python infer_geneses.py --input-video input.mp4 --checkpoint ./ckpt \
-  --output-wav separated.wav [--output-video output.mp4]
+# 2. sync code, install deps, run the dry run (reads runpod/pod.json)
+./runpod/sync_and_launch.sh sync            # rsync the code  (top-level excludes are "/"-anchored!)
+./runpod/sync_and_launch.sh bootstrap       # build the targeted venv + prewarm w2v-bert
+./runpod/sync_and_launch.sh launch          # download sg mp3s -> dry-run finetune (background)
+./runpod/sync_and_launch.sh tail            # follow /Sidon/train.log
 ```
 
-### PBS cluster submission
-```bash
-qsub scripts/pbs/train_geneses_dialogue.sh
-qsub scripts/pbs/diffusion_dialogue_sidon_small.sh
-```
+**Drive long steps detached + poll the log.** RunPod's SSH TCP proxy is intermittently congested; start
+long work with `setsid bash … </dev/null >log 2>&1 &` and poll the log file. Do **not** hammer SSH with
+rapid retry loops — that trips sshd `MaxStartups` and makes it worse; space attempts ≥15–20 s apart.
+
+### Pod layout (everything under `/`)
+| path | what |
+|---|---|
+| `/Sidon` | the repo (rsync'd from local) |
+| `/Sidon/.venv` | targeted venv (uv, py3.10, torch 2.8 cu128) |
+| `/Sidon/ckpt_v0.1/dryrun_decoder.pt` | the trained decoder saved by the dry run |
+| `/Sidon/{bootstrap,train,dryrun}.log` | stdout/stderr of bootstrap / the run |
+| `/data/sg` | extracted sg-podcast mp3s (the direct loader reads these) |
+| `/hf_cache` | `HF_HOME` (w2v-bert + sidon-v0.1 downloads) |
+
+### Dry-run tunables (env for `runpod/run_sidon_dryrun.sh`)
+`MAX_FILES` [60] podcasts sampled · `STEPS` [20] · `BATCH` [2] · `WIN` [10] s window · `NUM_WORKERS` [2].
+The sg download/extract step skips if `/data/sg/.done` exists. **Cost:** SECURE H100 ≈ $3.29/hr —
+`terminate` when done.
+
+### Bootstrap note
+`runpod/bootstrap.sh` builds a **targeted** venv (not `uv sync`): it skips `flash-attn` / `mmdit` /
+`flow-matching` / `diffusers` / `ray` (GENESES-only; flash-attn's source build is slow/fragile) and
+installs just what the restoration pipeline imports — including `descript-audio-codec` (`dac` + `audiotools`,
+which `sidon.model` imports unconditionally) and `pyroomacoustics`.
 
 ## Architecture
 
 ### Training entry point
-`src/sidon/train.py` — Hydra entrypoint. Resolves `cfg.data.datamodule` and `cfg.model.lightning_module` from config and calls `trainer.fit()`. The top-level config is `config/config.yaml`; override via `model=<name>` and `data=<name>`.
+`src/sidon/train.py` — Hydra entrypoint. Resolves `cfg.data.datamodule` and `cfg.model.lightning_module`
+and calls `trainer.fit()`. Top-level config `config/config.yaml`; override via `model=<name>`/`data=<name>`.
 
 ### Model variants and their Lightning modules
-
 | Config key | Lightning module | Description |
 |---|---|---|
-| `sidon_feature_predictor` | `sidon.model.sidon.lightning_module.FeaturePredictorLightningModule` | LoRA-adapts w2v-BERT student to predict clean SSL features from noisy input |
+| `sidon_feature_predictor` | `sidon.model.sidon.lightning_module.FeaturePredictorLightningModule` | LoRA-adapts w2v-BERT student to predict clean SSL features from noisy input (MSE vs frozen teacher) |
 | `sidon_vocoder_pretrain` / `sidon_vocoder_finetune` | `sidon.model.sidon.lightning_module.SidonLightningModule` | DAC decoder + GAN discriminator; pretrain on clean SSL, finetune on denoised SSL |
 | `geneses_dialogue` | `sidon.model.geneses.lightning_module.GenesesLightningModule` | Flow-matching separator: MMDiT + DACVAE + w2v-BERT conditioning |
 | `diffusion_dialogue_sidon*` | `sidon.model.dialogue_sidion.lightning_module.*` | Diffusion-based dialogue separation variants |
 
-### GENESES data flow (dialogue separation)
-1. Batch delivers `input_wav` [B, 2, T] (stereo/two-speaker) and `noisy_16k_mixture` [B, T]
-2. Both speakers encoded via frozen `DACVAE` → VAE latents [B, C, T_latent]
-3. Noisy mixture extracted via `SSLFeatureExtractor` (w2v-BERT layer features) → `ssl_merged` conditioning
-4. `MMDiT` (three-modality: ssl_merged + vae_1 + vae_2) trained with affine flow-matching loss
-5. Inference uses `ODESolver` from the `flow_matching` library to sample separated latents, then decoded by `DACVAE`
-
 ### Key components
-- `src/sidon/model/geneses/components.py` — `MMDiT` wrapper with sinusoidal positional embeddings and `TimestepEmbedder`
-- `src/sidon/model/geneses/dacvae.py` — Thin wrapper around a TorchScript-exported DAC VAE checkpoint (loaded from HF Hub: `koacai/geneses`)
-- `src/sidon/model/geneses/ssl_feature_extractor.py` — Extracts intermediate layer features from w2v-BERT 2.0 (`facebook/w2v-bert-2.0`)
-- `src/sidon/model/losses.py` — `DACLoss` (mel) and `GANLoss` wrappers
-
-### Data pipeline
-- `src/sidon/data/datamodule.py` — `PreprocessedDataModule`: loads pre-materialized WebDataset shards containing `input_wav.pth`, `noisy_input_wav.pth`, and optional `ssl_inputs.pickle` / `noisy_ssl_inputs.pickle`
-- `src/sidon/data/preprocess/dialogue_datamodule.py` — `DialogueDatasetDataModule` (online) and `PreprocessedDialogueDataModule` (from shards): handles stereo multi-speaker audio, VAD filtering, noise augmentation, per-channel splitting and re-merging
-- `src/sidon/preprocess.py` — Materializes datamodule output into WebDataset shards via parallel writer processes
+- `src/sidon/data/preprocess/webdataset_datamodule.py` — `WebDatasetDataModule` (online degradation +
+  SSL feature extraction; the dry run trains directly from this).
+- `src/sidon/data/datamodule.py` — `PreprocessedDataModule` (reads pre-materialized shards).
+- `src/sidon/data/preprocess/functional_degrations.py` — RIR / noise / band-limit / clip / codec /
+  packet-loss transforms applied online.
+- `src/sidon/model/sidon/lightning_module.py` — `FeaturePredictorLightningModule`, `SidonLightningModule`.
+- `src/sidon/model/losses.py` — `DACLoss` (multi-resolution mel/STFT) and `GANLoss` wrappers.
+- `export.py` — how the released sidon-v0.1 `.pt`s map back onto the training modules.
 
 ### Config structure (`config/`)
 ```
 config/
-  config.yaml          # top-level defaults: data=preprocessed, model=sidon_vocoder_pretrain
-  preprocess.yaml      # preprocessing entry point defaults
-  model/               # per-model configs (cfg.* → Lightning module constructor)
-  data/                # datamodule configs
-  train/default.yaml   # trainer, logger (WandB), callbacks, scheduler
+  config.yaml                       # defaults: data=preprocessed, model=sidon_vocoder_pretrain
+  model/                            # per-model configs (cfg.* -> Lightning module constructor)
+  data/                             # datamodule configs (incl. sg_podcast_online_48k.yaml for the dry run)
+  train/default.yaml                # trainer, WandB logger, callbacks, scheduler
 ```
+All Hydra overrides are CLI args (e.g. `model.cfg.ssl_model_name=...`, `~train.trainer.plugins`).
 
-All Hydra overrides are passed as CLI args (e.g., `model.cfg.ssl_model_name=...`).
-
-## Cluster (PBS) Notes
-
-- Scripts in `scripts/pbs/` use `mpirun` for multi-node, multi-GPU training
-- `WANDB_NAME` is auto-set from `$PBS_JOBID`; override with `export WANDB_NAME=...`
-- `.venv/bin/python` is called directly (not `uv run`) inside PBS jobs after activating `.venv`
-- Job output logs go to `<script_name>.o<jobid>` in the working directory
+## RunPod dry-run key files
+| file | role |
+|---|---|
+| `runpod/launch_pod.py` | provision / status / ssh / terminate the pod (REST API, stdlib only) |
+| `runpod/bootstrap.sh` | system deps + targeted uv venv + w2v-bert prewarm (on pod) |
+| `runpod/run_sidon_dryrun.sh` | **the dry run**: download sg mp3s -> `dryrun_v01_direct.py` (on pod) |
+| `runpod/dryrun_v01_direct.py` | **verified path**: direct mp3 loader + frozen v0.1 FE + fresh DAC decoder/GAN |
+| `runpod/prepare_sg_data.py` | download/extract sg-podcast (`--download-only`); also packs WebDataset shards |
+| `runpod/sync_and_launch.sh` | local: rsync + bootstrap + launch + tail |
+| `runpod/inspect_v01.py`, `inspect_v01b.py` | probes proving the released `.pt`s are frozen TorchScript |
+| `runpod/build_ckpt_from_hf.py` | attempts `.pt`->Lightning `.ckpt`; refuses (frozen TS) — kept as evidence |
+| `runpod/dryrun_v01_decoder.py` | earlier WebDataset-based variant (superseded by the direct loader) |
+| `config/data/sg_podcast_online_48k.yaml` | online 48 kHz WebDataset data module (for the full pipeline) |
+```
