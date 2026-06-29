@@ -6,11 +6,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Sidon is a speech restoration research system. It pairs a LoRA-adapted w2v-BERT 2.0 feature predictor with a DAC-based vocoder to restore degraded speech. A separate branch (`dialogue`) extends the system with **GENESES** — a flow-matching two-speaker dialogue separator built on MMDiT + DACVAE.
 
-> **Active task in this checkout:** a **RunPod dry-run finetune** that *continues from the
-> released `sarulab-speech/sidon-v0.1` weights* on the Singaporean-podcast dataset (the same
-> data source as `../neucodec-44k`), on **1× H100**, with everything under `/` (never the slow
-> `/workspace` network volume). All of that lives in `runpod/` + `config/data/sg_podcast_online_48k.yaml`
-> and is documented under "RunPod dry-run" below.
+> **Active task in this checkout:** a **call-centre / telephony restoration finetune** on
+> **1× H100 (RunPod, US, SECURE, everything under `/`, never `/workspace`)**. Two stages, both
+> trained from scratch (the released `sidon-v0.1` is frozen TorchScript — not loadable):
+> **stage 1** LoRA-adapts the *full 24-layer* w2v-BERT 2.0 to map telephony-degraded → clean
+> features (MSE distillation); **stage 2** trains a 188M DAC decoder + GAN to reconstruct clean
+> 48 kHz from those features. Degradation is the realistic `runpod/degradations.py` `Degrader`
+> (call-centre mimic). Teachers are a clean ≥44 kHz pool (EARS + Expresso + DNSMOS-filtered HF
+> datasets + DNSMOS-filtered Malaysian/Singaporean podcast). Lives in `runpod/`; see
+> "Call-centre finetune" below. (The earlier sidon-v0.1 dry-run is superseded — see "RunPod
+> dry-run" for that history.)
+
+## Call-centre finetune (current)
+
+All under `runpod/`. **1× H100, US, SECURE, `/` only.** Drive long jobs detached
+(`setsid … </dev/null >log 2>&1 &`) and poll the log — the RunPod SSH proxy is flaky.
+
+**Pipeline (two stages, both use the realistic degradation + the clean teacher pool):**
+```
+stage 1 (FE):  clean 48k --16k--> Degrader --> (student 24L w2v-BERT + LoRA) --> H_student
+               clean 48k --16k-->          --> (teacher 24L w2v-BERT, frozen) --> H_clean
+               loss = MSE(H_student, H_clean)         # only ~16M LoRA trains
+stage 2 (decoder):  telephony-degraded --(FROZEN stage-1 FE)--> features[T,1024]
+                    --(TRAINABLE DAC decoder 188M)--> 48 kHz   loss = 15·mel + 2·adv + 1·feat (GAN)
+```
+- **Degradation** = `runpod/degradations.py` `Degrader` (ported from `../neucodec-44k-speech-enhancement`,
+  tuned vs real `emgs` call samples). `DEGRADE_CFG` in both trainers: `mode=mix` (80% telephony /
+  20% generic). Telephony = telephone HP → random <6 kHz narrowband ceiling (8/11/12/16k bottleneck)
+  → GSM / G.711-µ-law codec → 16–40 kbps MP3 → line noise + VoIP dropouts. Needs `soxr`+`scipy`+ffmpeg
+  (GSM/µ-law/mp3 codecs).
+- **Teacher pool** `/data/clean48k/` (clean ≥44 kHz only — the model learns to *output* the teacher):
+  `ears` + `expresso_{read,conv}` (studio), `extra/` (DNSMOS-filtered ≥44 kHz HF datasets via
+  `clean_teacher_datasets.json`), `podcast_{sg,my}/` (DNSMOS-filtered Malaysian + Singaporean podcast
+  chunks, bak ≥ 3.64). Built by `prepare_clean48k.py` (+`clean_extra` source) and `prepare_podcast_clean.py`.
+- **Cleanliness metric** = DNSMOS P.835 `bak` (background-noise MOS) via `dnsmos_metric.py`
+  (`speechmos`); baseline EARS+Expresso ≈ 3.64. Candidate ≥44 kHz HF datasets were probed/filtered
+  by `../dataset/multilingual-tts/discover/noisefilter/`.
+- **Released:** `Scicom-intl/sidon-callcentre` (FE adapter `fe_adapter_full.pt` + `decoder_only.pt`
+  + `*_train_state.pt` with optimizer). Local **peft-free** inference: `runpod/infer_callcentre.py`
+  (merges LoRA into the base). README: `runpod/README_callcentre.md`.
+
+| run/launch | file |
+|---|---|
+| stage-1 FE train | `train_fe_callcentre.py` (24L w2v-BERT + LoRA, Degrader, map-style Dataset) |
+| stage-2 decoder | `train_decoder_callcentre.py` (DAC decoder + GAN, frozen FE, bf16, grad-accum) |
+| FE re-train wrapper | `go_fe_realdeg.sh` |  decoder launch | `go_decoder_b6w6.sh` (batch4/accum6/win6/3072ch) |
+| clean data | `prepare_clean48k.py` (ears/expresso/clean_extra) · `prepare_podcast_clean.py` (`go_podcast.sh`) |
+| inference | `infer_callcentre.py` · pod→HF push `pod_push_decoder.py` / `pod_prep_infer.py` |
+| pod control | `launch_pod.py` (provision/status/terminate) · `bootstrap_fe.sh` (targeted venv) |
 
 ## Environment Setup
 
