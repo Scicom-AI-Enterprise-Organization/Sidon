@@ -15,5 +15,5 @@ cd /Sidon
 # resumed-from-checkpoint steps (< the old run's high-water mark) aren't dropped by
 # wandb's monotonic-step rule.
 exec env STEPS=100000 BATCH=4 ACCUM=6 WIN=6 NUM_WORKERS=8 \
-    DEC_CHANNELS=3072 WANDB_NAME=decoder-callcentre-3072-scaleup \
+    DEC_CHANNELS=3072 WANDB_NAME=decoder-callcentre-3072-realdeg \
     bash runpod/run_decoder_callcentre.sh

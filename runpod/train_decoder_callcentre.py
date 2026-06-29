@@ -36,6 +36,7 @@ from omegaconf import OmegaConf
 import audiotools
 import dac
 from sidon.model.losses import DACLoss, GANLoss
+from degradations import Degrader  # realistic call-centre degradation (ported from neucodec-44k-se)
 
 SSL_MODEL = "facebook/w2v-bert-2.0"
 LAYERS = 24
@@ -53,6 +54,25 @@ DAC_LOSS_CFG = OmegaConf.create({
                  "pow": 1.0, "clamp_eps": 1.0e-5, "mag_weight": 0.0},
 })
 W = {"regression_loss": 15.0, "adv_gen": 2.0, "adv_feat": 1.0}
+
+# Realistic call-centre degradation (Degrader, ported from neucodec-44k-se, tuned vs
+# real emgs call samples): 80% telephony mimic (telephone HP -> random <6 kHz narrowband
+# ceiling via 8/11/12/16 kHz bottleneck -> GSM/G.711-mulaw codec -> 16-40 kbps MP3 ->
+# line noise + VoIP dropouts) + 20% generic (reverb/noise/band/clip/codec/packet).
+DEGRADE_CFG = {
+    "enable": True, "mode": "mix", "telephony_share": 0.8,
+    "prob_reverb": 0.3, "prob_noise": 0.5, "prob_band_limit": 0.5,
+    "prob_clip": 0.5, "prob_codec": 0.5, "prob_packet_loss": 0.3,
+    "band_limit_srs": [4000, 6000, 8000, 11025, 12000], "codec_qscale": [1, 10],
+    "reverb_backend": "synthetic", "reverb_rt60": [0.1, 0.7],
+    "noise_filelist": None, "noise_snr": [-5, 20],
+    "telephony": {
+        "band_hz": [2800, 4200], "hp_hz": [200, 350],
+        "codecs": ["gsm", "mulaw", "none"], "codec_weights": [0.6, 0.25, 0.15],
+        "mp3_kbps": [16, 24, 32, 40], "snr_db": [8, 28], "noise_prob": 0.85,
+        "sr_choices": [8000, 11025, 12000, 16000],
+    },
+}
 
 
 def log(m: str) -> None:
@@ -76,40 +96,13 @@ def _infinite(loader):
             yield batch
 
 
-def telephony_degrade(x: np.ndarray, rng: random.Random) -> np.ndarray:
-    """16 kHz clean -> telephony-degraded 16 kHz (same as stage 1)."""
-    t = torch.from_numpy(x).float().view(1, -1)
-    n = t.shape[-1]
-    t = torchaudio.functional.resample(torchaudio.functional.resample(t, FE_SR, 8000), 8000, FE_SR)
-    t = t[:, :n] if t.shape[-1] >= n else torch.nn.functional.pad(t, (0, n - t.shape[-1]))
-    if rng.random() < 0.7:
-        t = t.clamp(-1, 1)
-        t = torchaudio.functional.mu_law_decoding(torchaudio.functional.mu_law_encoding(t, 256), 256)
-    if rng.random() < 0.4:
-        try:
-            eff = torchaudio.io.AudioEffector(format="mp3", codec_config=torchaudio.io.CodecConfig(qscale=9))
-            y = eff.apply(t.view(-1, 1), FE_SR).view(1, -1)
-            t = y[:, :n] if y.shape[-1] >= n else torch.nn.functional.pad(y, (0, n - y.shape[-1]))
-        except Exception:
-            pass
-    if rng.random() < 0.5:
-        dur = n / FE_SR
-        for _ in range(max(1, int(dur * 3 / 10))):
-            d = rng.uniform(0.02, 0.15); s = rng.uniform(0, max(0.0, dur - d))
-            t[:, int(s * FE_SR):int((s + d) * FE_SR)] = 0
-    if rng.random() < 0.6:
-        snr = rng.uniform(5, 25); p = t.pow(2).mean() + 1e-9
-        t = t + torch.randn_like(t) * torch.sqrt(p / (10 ** (snr / 10)))
-    m = t.abs().max()
-    return (t / m * 0.95 if m > 1e-6 else t).view(-1).numpy().astype("float32")
-
-
 class Clean48Telephony(Dataset):
     """Map-style: one item = (clean48 [win*SR], degraded16 [win*FE_SR]) for the same
     random window. One slot per `win` seconds of each file (longer files -> more
     slots), so one epoch ~= one pass over all the audio."""
     def __init__(self, files, win_s):
         self.win = win_s
+        self.degrader = Degrader(DEGRADE_CFG)
         self.index = []        # (path, samplerate, frames, wlen_frames) per window-slot
         self.total_sec = 0.0
         for p in files:
@@ -147,7 +140,7 @@ class Clean48Telephony(Dataset):
         c48 = (c48 / m * 0.95)
         c48 = torch.nn.functional.pad(c48, (0, max(0, n48 - c48.shape[-1])))[:n48].numpy().astype("float32")
         c16 = torchaudio.functional.resample(torch.from_numpy(c48).view(1, -1), SR, FE_SR).view(-1).numpy()
-        d16 = telephony_degrade(c16, random)[:len(c16)]
+        d16 = self.degrader.degrade(c16, FE_SR)[:len(c16)]
         if len(d16) < len(c16):
             d16 = np.pad(d16, (0, len(c16) - len(d16)))
         return c48, d16

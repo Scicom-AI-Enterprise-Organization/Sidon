@@ -38,11 +38,30 @@ from torch.utils.data import DataLoader, Dataset
 import transformers
 from transformers import AutoFeatureExtractor, Wav2Vec2BertModel
 from peft import LoraConfig, inject_adapter_in_model
+from degradations import Degrader  # realistic call-centre degradation (ported from neucodec-44k-se)
 
 SSL_MODEL = "facebook/w2v-bert-2.0"
 LAYERS = 24            # full w2v-BERT 2.0 (vs the 8-layer Sidon default)
 SR = 16000            # FE works at 16 kHz
 AUDIO_EXTS = (".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a")
+
+# Realistic call-centre degradation (Degrader, ported from neucodec-44k-se, tuned vs
+# real emgs call samples): 80% telephony mimic (telephone HP -> random <6 kHz narrowband
+# ceiling -> GSM/G.711-mulaw -> 16-40 kbps MP3 -> line noise) + 20% generic chain.
+DEGRADE_CFG = {
+    "enable": True, "mode": "mix", "telephony_share": 0.8,
+    "prob_reverb": 0.3, "prob_noise": 0.5, "prob_band_limit": 0.5,
+    "prob_clip": 0.5, "prob_codec": 0.5, "prob_packet_loss": 0.3,
+    "band_limit_srs": [4000, 6000, 8000, 11025, 12000], "codec_qscale": [1, 10],
+    "reverb_backend": "synthetic", "reverb_rt60": [0.1, 0.7],
+    "noise_filelist": None, "noise_snr": [-5, 20],
+    "telephony": {
+        "band_hz": [2800, 4200], "hp_hz": [200, 350],
+        "codecs": ["gsm", "mulaw", "none"], "codec_weights": [0.6, 0.25, 0.15],
+        "mp3_kbps": [16, 24, 32, 40], "snr_db": [8, 28], "noise_prob": 0.85,
+        "sr_choices": [8000, 11025, 12000, 16000],
+    },
+}
 
 
 def log(m: str) -> None:
@@ -68,44 +87,6 @@ def _infinite(loader):
             yield batch
 
 
-def telephony_degrade(x: np.ndarray, rng: random.Random) -> np.ndarray:
-    """Simulate call-centre/telephony degradation on a 16 kHz clean signal."""
-    t = torch.from_numpy(x).float().view(1, -1)
-    n = t.shape[-1]
-    # 1) narrowband (defining telephony trait): 16k -> 8k -> 16k
-    t = torchaudio.functional.resample(torchaudio.functional.resample(t, SR, 8000), 8000, SR)
-    t = t[:, :n] if t.shape[-1] >= n else torch.nn.functional.pad(t, (0, n - t.shape[-1]))
-    # 2) G.711 mu-law companding
-    if rng.random() < 0.7:
-        t = t.clamp(-1, 1)
-        t = torchaudio.functional.mu_law_decoding(torchaudio.functional.mu_law_encoding(t, 256), 256)
-    # 3) lossy codec (mp3) as a proxy for VoIP codecs
-    if rng.random() < 0.4:
-        try:
-            eff = torchaudio.io.AudioEffector(
-                format="mp3", codec_config=torchaudio.io.CodecConfig(qscale=9))
-            y = eff.apply(t.view(-1, 1), SR).view(1, -1)
-            t = y[:, :n] if y.shape[-1] >= n else torch.nn.functional.pad(y, (0, n - y.shape[-1]))
-        except Exception:
-            pass
-    # 4) packet loss: zero random 20-150 ms chunks
-    if rng.random() < 0.5:
-        dur = n / SR
-        for _ in range(max(1, int(dur * 3 / 10))):
-            d = rng.uniform(0.02, 0.15)
-            s = rng.uniform(0, max(0.0, dur - d))
-            t[:, int(s * SR):int((s + d) * SR)] = 0
-    # 5) additive noise at random SNR
-    if rng.random() < 0.6:
-        snr = rng.uniform(5, 25)
-        p = t.pow(2).mean() + 1e-9
-        t = t + torch.randn_like(t) * torch.sqrt(p / (10 ** (snr / 10)))
-    m = t.abs().max()
-    if m > 1e-6:
-        t = t / m * 0.95
-    return t.view(-1).numpy().astype("float32")
-
-
 class CleanTelephonyPairs(Dataset):
     """Map-style window sampler: one item = one `win`-second window as a
     (clean 16k, telephony-degraded 16k) pair. The index holds one slot per `win`
@@ -114,6 +95,7 @@ class CleanTelephonyPairs(Dataset):
     access, so re-epochs see different crops + fresh degradation."""
     def __init__(self, files, win_s):
         self.win = win_s
+        self.degrader = Degrader(DEGRADE_CFG)
         self.index = []        # (path, samplerate, frames, wlen_frames) per window-slot
         self.total_sec = 0.0
         for p in files:
@@ -150,7 +132,7 @@ class CleanTelephonyPairs(Dataset):
         x = (x / m * 0.95).astype("float32")
         clean = np.zeros(win, "float32")
         clean[:min(win, len(x))] = x[:win]
-        degraded = telephony_degrade(clean, random)[:win]
+        degraded = self.degrader.degrade(clean, SR)[:win]
         if len(degraded) < win:
             degraded = np.pad(degraded, (0, win - len(degraded)))
         return clean, degraded

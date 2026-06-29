@@ -22,7 +22,9 @@ uv pip install --python "$VENV/bin/python" \
 uv pip install --python "$VENV/bin/python" \
     "transformers>=4.56.1" "peft>=0.16.0" \
     "datasets>=2.17" soundfile librosa numpy tqdm wandb \
+    soxr scipy \
     "huggingface_hub>=0.34" hf_transfer hf_xet
+# soxr + scipy: required by degradations.py (resample + telephone HP/LP IIR filters).
 
 echo "[bootstrap_fe] import check:"
 "$VENV/bin/python" - <<'PY'
