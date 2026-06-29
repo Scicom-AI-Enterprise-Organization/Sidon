@@ -6,7 +6,7 @@ set -u
 pkill -9 -f train_decoder_callcentre 2>/dev/null
 pkill -9 -f run_decoder 2>/dev/null
 sleep 3
-rm -f /Sidon/decoder_callcentre/last.pt
+# keep last.pt so this RESUMES (don't wipe progress on relaunch)
 cd /Sidon
 # batch=6/win=6 OOMs (~79 GB, right at the edge); batch=4 accum=6 keeps the SAME
 # effective batch (24) and win=6 within memory (~53 GB).

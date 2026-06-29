@@ -34,7 +34,7 @@ import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
-from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.data import DataLoader, Dataset
 import transformers
 from transformers import AutoFeatureExtractor, Wav2Vec2BertModel
 from peft import LoraConfig, inject_adapter_in_model
@@ -47,6 +47,25 @@ AUDIO_EXTS = (".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a")
 
 def log(m: str) -> None:
     print(m, flush=True)
+
+
+def _winit(_):
+    """Per-worker init: single-thread (avoid oversubscription) and decorrelate RNGs.
+    With persistent_workers the worker is seeded once here, then its RNG advances
+    across epochs, so each window still gets a fresh random crop + degradation."""
+    torch.set_num_threads(1)
+    info = torch.utils.data.get_worker_info()
+    if info is not None:
+        s = int(info.seed % (2 ** 31))
+        random.seed(s); np.random.seed(s); torch.manual_seed(s)
+
+
+def _infinite(loader):
+    """Re-iterate a map-style DataLoader across epochs (re-shuffles each pass) so a
+    fixed --steps budget can span multiple epochs."""
+    while True:
+        for batch in loader:
+            yield batch
 
 
 def telephony_degrade(x: np.ndarray, rng: random.Random) -> np.ndarray:
@@ -87,43 +106,54 @@ def telephony_degrade(x: np.ndarray, rng: random.Random) -> np.ndarray:
     return t.view(-1).numpy().astype("float32")
 
 
-class CleanTelephonyPairs(IterableDataset):
-    def __init__(self, files, win_s, seed=0):
-        self.files = files
+class CleanTelephonyPairs(Dataset):
+    """Map-style window sampler: one item = one `win`-second window as a
+    (clean 16k, telephony-degraded 16k) pair. The index holds one slot per `win`
+    seconds of every file (longer files -> more slots), so a full pass over the
+    dataset (one epoch) covers ~all the audio once. Window starts are random per
+    access, so re-epochs see different crops + fresh degradation."""
+    def __init__(self, files, win_s):
         self.win = win_s
-        self.seed = seed
-
-    def __iter__(self):
-        info = torch.utils.data.get_worker_info()
-        rng = random.Random(self.seed * 1000 + (info.id if info else 0) + 1)
-        win = int(self.win * SR)
-        while True:
-            path = rng.choice(self.files)
+        self.index = []        # (path, samplerate, frames, wlen_frames) per window-slot
+        self.total_sec = 0.0
+        for p in files:
             try:
-                fi = sf.info(path)
-                sr0, frames = fi.samplerate, fi.frames
-                wlen = int(self.win * sr0)
-                start = rng.randint(0, max(0, frames - wlen))
-                x, _ = sf.read(path, start=start, frames=wlen if frames > wlen else -1,
-                               dtype="float32", always_2d=False)
-            except Exception:
+                fi = sf.info(p)
+            except Exception:  # noqa: BLE001
                 continue
-            if x.ndim > 1:
-                x = x[:, 0]
-            if len(x) < int(0.5 * sr0):
+            if fi.samplerate <= 0 or fi.frames < int(0.5 * fi.samplerate):
                 continue
-            if sr0 != SR:
-                x = torchaudio.functional.resample(torch.from_numpy(x).float().view(1, -1), sr0, SR).view(-1).numpy()
-            m = np.abs(x).max()
-            if m > 1e-6:
-                x = (x / m * 0.95).astype("float32")
-            else:
-                continue
-            clean = x[:win]
-            degraded = telephony_degrade(clean, rng)[:len(clean)]
-            if len(degraded) < len(clean):
-                degraded = np.pad(degraded, (0, len(clean) - len(degraded)))
-            yield clean, degraded
+            self.total_sec += fi.frames / fi.samplerate
+            wlen = int(win_s * fi.samplerate)
+            nwin = max(1, fi.frames // max(1, wlen))
+            self.index.extend([(p, fi.samplerate, fi.frames, wlen)] * nwin)
+
+    def __len__(self):
+        return len(self.index)
+
+    def __getitem__(self, idx):
+        path, sr0, frames, wlen = self.index[idx]
+        win = int(self.win * SR)
+        start = random.randint(0, max(0, frames - wlen))
+        try:
+            x, _ = sf.read(path, start=start, frames=wlen if frames > wlen else -1,
+                           dtype="float32", always_2d=False)
+        except Exception:  # noqa: BLE001
+            return np.zeros(win, "float32"), np.zeros(win, "float32")
+        if x.ndim > 1:
+            x = x[:, 0]
+        if sr0 != SR:
+            x = torchaudio.functional.resample(torch.from_numpy(x).float().view(1, -1), sr0, SR).view(-1).numpy()
+        m = np.abs(x).max()
+        if m <= 1e-6:
+            return np.zeros(win, "float32"), np.zeros(win, "float32")
+        x = (x / m * 0.95).astype("float32")
+        clean = np.zeros(win, "float32")
+        clean[:min(win, len(x))] = x[:win]
+        degraded = telephony_degrade(clean, random)[:win]
+        if len(degraded) < win:
+            degraded = np.pad(degraded, (0, win - len(degraded)))
+        return clean, degraded
 
 
 def build_student():
@@ -159,7 +189,10 @@ def main() -> None:
              if p.lower().endswith(AUDIO_EXTS)]
     if not files:
         raise SystemExit(f"no audio under {a.data_root}")
-    log(f"[data] {len(files)} clean audio files under {a.data_root}")
+    ds = CleanTelephonyPairs(files, a.win)
+    if len(ds) == 0:
+        raise SystemExit(f"no usable audio under {a.data_root}")
+    log(f"[data] {len(files)} files ~{ds.total_sec/3600:.1f}h -> {len(ds)} windows/epoch ({a.win}s)")
 
     # wandb (only if a key is present; resumes the same run on relaunch)
     wb = None
@@ -170,7 +203,8 @@ def main() -> None:
                             id=a.wandb_name, resume="allow",
                             config={"layers": LAYERS, "steps": a.steps, "batch": a.batch,
                                     "win_s": a.win, "lr": a.lr, "warmup": a.warmup,
-                                    "n_files": len(files), "sr": SR, "lora_r": 64})
+                                    "n_files": len(files), "windows_per_epoch": len(ds),
+                                    "sr": SR, "lora_r": 64})
             log(f"[wandb] run: {wb.url}")
         except Exception as e:  # noqa: BLE001
             log(f"[wandb] disabled ({e})")
@@ -184,10 +218,10 @@ def main() -> None:
         sd = proc(dg, sampling_rate=SR, return_tensors="pt", padding=True)
         return sc, sd
 
-    loader = DataLoader(CleanTelephonyPairs(files, a.win), batch_size=a.batch,
+    loader = DataLoader(ds, batch_size=a.batch, shuffle=True, drop_last=True,
                         num_workers=a.num_workers, collate_fn=collate, pin_memory=True,
-                        worker_init_fn=lambda _: torch.set_num_threads(1),
-                        persistent_workers=a.num_workers > 0)
+                        worker_init_fn=_winit, persistent_workers=a.num_workers > 0)
+    steps_per_epoch = max(1, len(loader))
 
     log(f"[model] loading teacher + student (w2v-BERT {LAYERS}L) …")
     teacher = Wav2Vec2BertModel.from_pretrained(SSL_MODEL, num_hidden_layers=LAYERS).to(dev).eval()
@@ -212,11 +246,12 @@ def main() -> None:
         step0 = ck["step"]
         log(f"[resume] from step {step0}")
 
-    log(f"[train] steps={a.steps} batch={a.batch} win={a.win}s lr={a.lr} warmup={a.warmup}")
+    log(f"[train] steps={a.steps} batch={a.batch} win={a.win}s lr={a.lr} warmup={a.warmup} "
+        f"steps/epoch={steps_per_epoch}")
     step = step0
     t0 = time.time()
     run = 0.0
-    for sc, sd in loader:
+    for sc, sd in _infinite(loader):
         sc = {k: v.to(dev) for k, v in sc.items()}
         sd = {k: v.to(dev) for k, v in sd.items()}
         with torch.no_grad():
@@ -232,10 +267,11 @@ def main() -> None:
         run += loss.item()
         if step % a.log_every == 0:
             avg = run / a.log_every
-            log(f"[step {step}/{a.steps}] mse={avg:.5f} lr={sched.get_last_lr()[0]:.2e} "
-                f"{(time.time()-t0)/(step-step0):.2f}s/step")
+            ep = step / steps_per_epoch
+            log(f"[step {step}/{a.steps}] ep={ep:.2f} mse={avg:.5f} lr={sched.get_last_lr()[0]:.2e} "
+                f"{(time.time()-t0)/max(1,step-step0):.2f}s/step")
             if wb is not None:
-                wb.log({"mse": avg, "lr": sched.get_last_lr()[0]}, step=step)
+                wb.log({"mse": avg, "lr": sched.get_last_lr()[0], "epoch": ep}, step=step)
             run = 0.0
         if step % a.save_every == 0 or step >= a.steps:
             torch.save({"step": step, "student": student.state_dict(),

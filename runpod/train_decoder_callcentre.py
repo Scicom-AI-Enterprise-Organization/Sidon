@@ -28,7 +28,7 @@ import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
-from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.data import DataLoader, Dataset
 from transformers import AutoFeatureExtractor, Wav2Vec2BertModel
 from peft import LoraConfig, inject_adapter_in_model
 from omegaconf import OmegaConf
@@ -59,6 +59,23 @@ def log(m: str) -> None:
     print(m, flush=True)
 
 
+def _winit(_):
+    """Per-worker init: single-thread + decorrelate RNGs (persistent workers seed
+    once, then advance across epochs so each window gets a fresh crop/degradation)."""
+    torch.set_num_threads(1)
+    info = torch.utils.data.get_worker_info()
+    if info is not None:
+        s = int(info.seed % (2 ** 31))
+        random.seed(s); np.random.seed(s); torch.manual_seed(s)
+
+
+def _infinite(loader):
+    """Re-iterate a map-style DataLoader across epochs (re-shuffles each pass)."""
+    while True:
+        for batch in loader:
+            yield batch
+
+
 def telephony_degrade(x: np.ndarray, rng: random.Random) -> np.ndarray:
     """16 kHz clean -> telephony-degraded 16 kHz (same as stage 1)."""
     t = torch.from_numpy(x).float().view(1, -1)
@@ -87,40 +104,53 @@ def telephony_degrade(x: np.ndarray, rng: random.Random) -> np.ndarray:
     return (t / m * 0.95 if m > 1e-6 else t).view(-1).numpy().astype("float32")
 
 
-class Clean48Telephony(IterableDataset):
-    """Yields (clean48 [win*SR], degraded16 [win*FE_SR]) — same window, two rates."""
-    def __init__(self, files, win_s, seed=0):
-        self.files = files; self.win = win_s; self.seed = seed
-
-    def __iter__(self):
-        info = torch.utils.data.get_worker_info()
-        rng = random.Random(self.seed * 1000 + (info.id if info else 0) + 1)
-        n48 = int(self.win * SR)
-        while True:
-            path = rng.choice(self.files)
+class Clean48Telephony(Dataset):
+    """Map-style: one item = (clean48 [win*SR], degraded16 [win*FE_SR]) for the same
+    random window. One slot per `win` seconds of each file (longer files -> more
+    slots), so one epoch ~= one pass over all the audio."""
+    def __init__(self, files, win_s):
+        self.win = win_s
+        self.index = []        # (path, samplerate, frames, wlen_frames) per window-slot
+        self.total_sec = 0.0
+        for p in files:
             try:
-                fi = sf.info(path); wlen = int(self.win * fi.samplerate)
-                start = rng.randint(0, max(0, fi.frames - wlen))
-                x, sr0 = sf.read(path, start=start, frames=wlen if fi.frames > wlen else -1,
-                                 dtype="float32", always_2d=False)
-            except Exception:
+                fi = sf.info(p)
+            except Exception:  # noqa: BLE001
                 continue
-            if x.ndim > 1:
-                x = x[:, 0]
-            if len(x) < int(0.5 * sr0):
+            if fi.samplerate <= 0 or fi.frames < int(0.5 * fi.samplerate):
                 continue
-            t = torch.from_numpy(x).float().view(1, -1)
-            c48 = (torchaudio.functional.resample(t, sr0, SR) if sr0 != SR else t).view(-1)
-            m = c48.abs().max()
-            if m <= 1e-6:
-                continue
-            c48 = (c48 / m * 0.95)
-            c48 = torch.nn.functional.pad(c48, (0, max(0, n48 - c48.shape[-1])))[:n48].numpy().astype("float32")
-            c16 = torchaudio.functional.resample(torch.from_numpy(c48).view(1, -1), SR, FE_SR).view(-1).numpy()
-            d16 = telephony_degrade(c16, rng)[:len(c16)]
-            if len(d16) < len(c16):
-                d16 = np.pad(d16, (0, len(c16) - len(d16)))
-            yield c48, d16
+            self.total_sec += fi.frames / fi.samplerate
+            wlen = int(win_s * fi.samplerate)
+            nwin = max(1, fi.frames // max(1, wlen))
+            self.index.extend([(p, fi.samplerate, fi.frames, wlen)] * nwin)
+
+    def __len__(self):
+        return len(self.index)
+
+    def __getitem__(self, idx):
+        path, sr0, frames, wlen = self.index[idx]
+        n48 = int(self.win * SR)
+        n16 = int(self.win * FE_SR)
+        start = random.randint(0, max(0, frames - wlen))
+        try:
+            x, _ = sf.read(path, start=start, frames=wlen if frames > wlen else -1,
+                           dtype="float32", always_2d=False)
+        except Exception:  # noqa: BLE001
+            return np.zeros(n48, "float32"), np.zeros(n16, "float32")
+        if x.ndim > 1:
+            x = x[:, 0]
+        t = torch.from_numpy(np.ascontiguousarray(x)).float().view(1, -1)
+        c48 = (torchaudio.functional.resample(t, sr0, SR) if sr0 != SR else t).view(-1)
+        m = c48.abs().max()
+        if m <= 1e-6:
+            return np.zeros(n48, "float32"), np.zeros(n16, "float32")
+        c48 = (c48 / m * 0.95)
+        c48 = torch.nn.functional.pad(c48, (0, max(0, n48 - c48.shape[-1])))[:n48].numpy().astype("float32")
+        c16 = torchaudio.functional.resample(torch.from_numpy(c48).view(1, -1), SR, FE_SR).view(-1).numpy()
+        d16 = telephony_degrade(c16, random)[:len(c16)]
+        if len(d16) < len(c16):
+            d16 = np.pad(d16, (0, len(c16) - len(d16)))
+        return c48, d16
 
 
 def load_frozen_fe(ckpt_path, dev):
@@ -163,7 +193,12 @@ def main() -> None:
              if p.lower().endswith(AUDIO_EXTS)]
     if not files:
         raise SystemExit(f"no audio under {a.data_root}")
-    log(f"[data] {len(files)} clean files")
+    ds = Clean48Telephony(files, a.win)
+    if len(ds) == 0:
+        raise SystemExit(f"no usable audio under {a.data_root}")
+    opt_steps_per_epoch = max(1, len(ds) // (a.batch * max(1, a.accum)))
+    log(f"[data] {len(files)} files ~{ds.total_sec/3600:.1f}h -> {len(ds)} windows/epoch "
+        f"({a.win}s); {opt_steps_per_epoch} opt-steps/epoch")
 
     proc = AutoFeatureExtractor.from_pretrained(SSL_MODEL)
 
@@ -173,10 +208,9 @@ def main() -> None:
         ssl = proc(d16, sampling_rate=FE_SR, return_tensors="pt", padding=True)
         return c48, ssl
 
-    loader = DataLoader(Clean48Telephony(files, a.win), batch_size=a.batch,
+    loader = DataLoader(ds, batch_size=a.batch, shuffle=True, drop_last=True,
                         num_workers=a.num_workers, collate_fn=collate, pin_memory=True,
-                        worker_init_fn=lambda _: torch.set_num_threads(1),
-                        persistent_workers=a.num_workers > 0)
+                        worker_init_fn=_winit, persistent_workers=a.num_workers > 0)
 
     fe = load_frozen_fe(a.fe_ckpt, dev)
     decoder = dac.model.dac.Decoder(input_channel=HIDDEN, channels=a.dec_channels, rates=[8, 5, 4, 3, 2]).to(dev).train()
@@ -202,7 +236,10 @@ def main() -> None:
             import wandb
             wb = wandb.init(project="sidon", name=a.wandb_name, id=a.wandb_name, resume="allow",
                             config={"layers": LAYERS, "steps": a.steps, "batch": a.batch,
-                                    "win_s": a.win, "lr": a.lr, "sr": SR})
+                                    "accum": a.accum, "win_s": a.win, "lr": a.lr, "sr": SR,
+                                    "dec_channels": a.dec_channels,
+                                    "windows_per_epoch": len(ds),
+                                    "opt_steps_per_epoch": opt_steps_per_epoch})
             log(f"[wandb] run: {wb.url}")
         except Exception as e:  # noqa: BLE001
             log(f"[wandb] disabled ({e})")
@@ -216,7 +253,7 @@ def main() -> None:
     step = step0; micro = 0; nmicro = 0; t0 = time.time()
     acc = {"mel": 0.0, "adv_gen": 0.0, "adv_feat": 0.0, "d": 0.0, "g": 0.0}
     stop = False
-    for c48, ssl in loader:
+    for c48, ssl in _infinite(loader):
         ssl = {k: v.to(dev) for k, v in ssl.items()}
         target = c48.to(dev)
         # bf16 autocast around the heavy FE + decoder forward (activations dominate
@@ -251,8 +288,10 @@ def main() -> None:
             step += 1
             if step % a.log_every == 0:
                 m = {k: v / nmicro for k, v in acc.items()}
-                log(f"[step {step}/{a.steps}] mel={m['mel']:.4f} adv_gen={m['adv_gen']:.4f} "
-                    f"adv_feat={m['adv_feat']:.4f} d={m['d']:.4f} g={m['g']:.3f} "
+                m["lr"] = opt_g.param_groups[0]["lr"]
+                m["epoch"] = step / opt_steps_per_epoch
+                log(f"[step {step}/{a.steps}] ep={m['epoch']:.2f} mel={m['mel']:.4f} adv_gen={m['adv_gen']:.4f} "
+                    f"adv_feat={m['adv_feat']:.4f} d={m['d']:.4f} g={m['g']:.3f} lr={m['lr']:.1e} "
                     f"{(time.time()-t0)/max(1,step-step0):.2f}s/st")
                 if wb is not None:
                     wb.log(m, step=step)
