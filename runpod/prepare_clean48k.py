@@ -186,7 +186,8 @@ def export_hf_clean(entry: dict, out_root: Path, token, max_clips: int, min_sr: 
     return n
 
 
-def download_clean_extra(out_root: Path, token, manifest: str, topn: int, max_clips: int, min_sr: int) -> None:
+def download_clean_extra(out_root: Path, token, manifest: str, topn: int, max_clips: int,
+                         min_sr: int, shard: str = "0/1") -> None:
     p = Path(manifest)
     if not p.is_absolute():
         p = Path(__file__).resolve().parent / manifest
@@ -196,7 +197,12 @@ def download_clean_extra(out_root: Path, token, manifest: str, topn: int, max_cl
     rows = sorted(rows, key=lambda r: -(r.get("bak") or 0))
     if topn > 0:
         rows = rows[:topn]
-    log(f"[clean_extra] {len(rows)} datasets (top {topn or 'all'} by bak), <= {max_clips} clips each, >= {min_sr} Hz")
+    # shard "i/N": this process takes the strided slice rows[i::N] (per-dataset dirs are
+    # disjoint, so several sharded processes run in parallel without conflict).
+    si, ns = (int(x) for x in shard.split("/"))
+    rows = rows[si::ns]
+    log(f"[clean_extra] shard {si}/{ns}: {len(rows)} datasets (of top {topn or 'all'} by bak), "
+        f"<= {max_clips} clips each, >= {min_sr} Hz")
     total = 0
     for j, e in enumerate(rows, 1):
         log(f"[clean_extra] ({j}/{len(rows)}) bak={e.get('bak')} {e['id']}")
@@ -213,6 +219,7 @@ def main() -> None:
     ap.add_argument("--clean-topn", type=int, default=60, help="how many cleanest datasets (0=all)")
     ap.add_argument("--clean-max-clips", type=int, default=1500, help="cap per dataset")
     ap.add_argument("--clean-min-sr", type=int, default=44000)
+    ap.add_argument("--clean-shard", default="0/1", help="i/N strided slice for parallel downloads")
     a = ap.parse_args()
     out = Path(a.out)
     if "/workspace" in str(out.resolve()):
@@ -225,7 +232,8 @@ def main() -> None:
         elif s in HF_DATASETS:
             export_hf(s, out, token)
         elif s == "clean_extra":
-            download_clean_extra(out, token, a.clean_manifest, a.clean_topn, a.clean_max_clips, a.clean_min_sr)
+            download_clean_extra(out, token, a.clean_manifest, a.clean_topn, a.clean_max_clips,
+                                 a.clean_min_sr, a.clean_shard)
         else:
             log(f"[warn] unknown source {s}")
     total = sum(1 for _ in out.glob("**/*.wav"))

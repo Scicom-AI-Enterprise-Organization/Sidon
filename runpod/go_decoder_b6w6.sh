@@ -10,10 +10,10 @@ sleep 3
 cd /Sidon
 # batch=6/win=6 OOMs (~79 GB, right at the edge); batch=4 accum=6 keeps the SAME
 # effective batch (24) and win=6 within memory (~53 GB).
-# Fresh wandb run name (decoder-callcentre-3072v2): the original run already logged
-# up to step 3221, and wandb drops any entry with step < the run's high-water mark
-# on resume — so a resumed run silently hides mel/lr/epoch until it climbs past 3221.
-# A new run id logs lr/epoch immediately from the resumed checkpoint (step 2000).
-exec env STEPS=50000 BATCH=4 ACCUM=6 WIN=6 NUM_WORKERS=8 \
-    DEC_CHANNELS=3072 WANDB_NAME=decoder-callcentre-3072v2 \
+# Scale-up: resume the decoder from last.pt onto the EXPANDED teacher corpus
+# (EARS+Expresso + clean_extra) and train to 100k steps. Fresh wandb run name so the
+# resumed-from-checkpoint steps (< the old run's high-water mark) aren't dropped by
+# wandb's monotonic-step rule.
+exec env STEPS=100000 BATCH=4 ACCUM=6 WIN=6 NUM_WORKERS=8 \
+    DEC_CHANNELS=3072 WANDB_NAME=decoder-callcentre-3072-scaleup \
     bash runpod/run_decoder_callcentre.sh
