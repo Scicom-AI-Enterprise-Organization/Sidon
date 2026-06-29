@@ -217,3 +217,11 @@ sidon_runs/
 *.wav
 *.mp4
 exported/
+
+# call-centre finetune artifacts (not source)
+checkpoints/
+runpod/pod*.json
+runpod/*.log
+*_lora.pt
+fe_callcentre/
+decoder_callcentre/

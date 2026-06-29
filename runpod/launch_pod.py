@@ -40,6 +40,10 @@ DEFAULT_IMAGE = os.environ.get(
     "RUNPOD_IMAGE", "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
 )
 DEFAULT_GPU = "NVIDIA H100 80GB HBM3"
+# US-only data centers (force US region, SECURE H100). priority=availability lets
+# RunPod pick whichever US DC currently has the GPU.
+US_DATACENTERS = ["US-IL-1", "US-TX-3", "US-KS-2", "US-GA-2", "US-WA-1", "US-TX-1",
+                  "US-TX-4", "US-CA-2", "US-NC-1", "US-DE-1", "US-KS-3", "US-GA-1", "US-MD-1"]
 
 
 # --------------------------------------------------------------------------- #
@@ -140,6 +144,8 @@ def cmd_launch(a: argparse.Namespace) -> None:
         # network volume, exactly as requested.
         "containerDiskInGb": a.disk_gb,
         "volumeInGb": 0,
+        "dataCenterIds": US_DATACENTERS,
+        "dataCenterPriority": "availability",
         "ports": ["22/tcp"],
         "env": {"PUBLIC_KEY": pubkey},
     }
