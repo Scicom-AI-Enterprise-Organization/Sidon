@@ -50,41 +50,92 @@ RunPod SSH proxy is intermittently congested. Keep launch commands tiny (see `go
 
 ## wandb
 - FE (stage 1): https://wandb.ai/aies-scicom-scicom-ai/sidon/runs/fe-callcentre-d24-run1
-- Decoder: https://wandb.ai/aies-scicom-scicom-ai/sidon/runs/decoder-callcentre-3072
+- Decoder: https://wandb.ai/aies-scicom-scicom-ai/sidon/runs/decoder-callcentre-3072v2
 
 ## Checkpoints
 
-The trained artifact for the FE is the **LoRA adapter only** (~16M, ~62 MB); the 580M base is stock
-`facebook/w2v-bert-2.0`. The decoder checkpoint is the full 188M decoder state.
+Two slim artifacts (drop the optimizer/discriminator/base state):
 
-### Load the finetuned feature extractor
+| file | what | size |
+|---|---|---|
+| `checkpoints/fe_adapter_full.pt` | FE adapter: **144 tensors** — 96 LoRA (`lora_A`,`lora_B`) + 48 trained `output_dense` biases (`bias=lora_only`). 580M base is stock `facebook/w2v-bert-2.0`. | ~63 MB |
+| `checkpoints/decoder_only.pt` | the 188M DAC decoder state (`{'step','dec_channels','decoder'}`) | ~750 MB |
+
+> **Why "full" matters:** `bias=lora_only` also trains the adapted layers' biases (measured
+> max\|Δ\|≈0.08 vs base — not negligible), so a LoRA-only (96-tensor) export is incomplete.
+> Always use the 144-tensor `fe_adapter_full.pt`.
+
+Pull them off the pod (slim them first to skip optimizer state — see `pod_prep_infer.py`):
+```bash
+python runpod/pod_prep_infer.py        # on the pod: writes fe_adapter_full.pt + decoder_only.pt
+scp <pod>:/Sidon/fe_callcentre/fe_adapter_full.pt      checkpoints/
+scp <pod>:/Sidon/decoder_callcentre/decoder_only.pt    checkpoints/
+```
+
+### Load the feature extractor — option A: merge the adapter (no `peft` needed)
+The effective adapted layer is `W_eff = W_base + (α/r)·BᴬBᴮ`, bias = trained bias. Merging once
+means inference needs only `transformers` + `descript-audio-codec` (this is what
+`infer_callcentre.py` does):
 ```python
 import torch
-from transformers import Wav2Vec2BertModel, AutoFeatureExtractor
-from peft import LoraConfig, inject_adapter_in_model
+from transformers import Wav2Vec2BertModel
+ck = torch.load("checkpoints/fe_adapter_full.pt", map_location="cpu"); ad = ck["adapter"]
+scaling = ck["lora_alpha"] / ck["r"]                                   # 16/64 = 0.25
+fe = Wav2Vec2BertModel.from_pretrained("facebook/w2v-bert-2.0", num_hidden_layers=24, layerdrop=0.0)
+sd = fe.state_dict()
+for p in sorted({k[:-len(".lora_A.default.weight")] for k in ad if k.endswith(".lora_A.default.weight")}):
+    sd[p + ".weight"] = sd[p + ".weight"].float() + scaling * (ad[p+".lora_B.default.weight"].float()
+                                                               @ ad[p+".lora_A.default.weight"].float())
+    if p + ".base_layer.bias" in ad:                                  # trained lora_only bias
+        sd[p + ".bias"] = ad[p + ".base_layer.bias"]
+fe.load_state_dict(sd); fe.eval()
+```
 
+### Load the feature extractor — option B: `peft` (matches training exactly)
+```python
+from peft import LoraConfig, inject_adapter_in_model
 fe = Wav2Vec2BertModel.from_pretrained("facebook/w2v-bert-2.0", num_hidden_layers=24, layerdrop=0.0)
 fe = inject_adapter_in_model(
     LoraConfig(lora_alpha=16, lora_dropout=0.1, r=64, bias="lora_only", target_modules=["output_dense"]), fe)
-
-ck = torch.load("checkpoints/fe_callcentre_lora.pt", map_location="cpu")   # {'step', 'lora': {...96 tensors...}}
-missing, unexpected = fe.load_state_dict(ck["lora"], strict=False)         # only adapter keys are loaded
-assert not unexpected, unexpected
+res = fe.load_state_dict(torch.load("checkpoints/fe_adapter_full.pt")["adapter"], strict=False)
+assert not res.unexpected_keys      # missing = the frozen base (loaded by from_pretrained)
 fe.eval()
-
-proc = AutoFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
-# feats = fe(**proc(wav_16k, sampling_rate=16000, return_tensors="pt")).last_hidden_state  # [B,T,1024]
 ```
-Verified loading locally: step 20000, 96 LoRA tensors (48 `lora_A` (64,4096) + 48 `lora_B` (1024,64)).
 
 ### Load the decoder
 ```python
 import dac, torch
-decoder = dac.model.dac.Decoder(input_channel=1024, channels=3072, rates=[8,5,4,3,2])
-decoder.load_state_dict(torch.load("checkpoints/decoder_callcentre_last.pt", map_location="cpu")["decoder"])
-decoder.eval()
-# wav48k = decoder(feats.transpose(1,2))   # [B,T,1024] -> [B,1,T*960]
+ck = torch.load("checkpoints/decoder_only.pt", map_location="cpu")
+decoder = dac.model.dac.Decoder(input_channel=1024, channels=ck["dec_channels"], rates=[8,5,4,3,2])
+decoder.load_state_dict(ck["decoder"]); decoder.eval()
+# wav48k = decoder(feats.transpose(1,2))   # [B,T,1024] -> [B,1,T*960]  (50 fps x 960 = 48 kHz)
 ```
+
+## Inference (restoration)
+
+`runpod/infer_callcentre.py` restores telephony/call-centre audio to clean 48 kHz end-to-end:
+
+```
+input audio --16k--> (FE: 24L w2v-BERT + merged LoRA) --features[T,1024]--> (DAC decoder 188M) --> 48 kHz
+```
+
+```bash
+python runpod/infer_callcentre.py \
+    --input audio --out-dir audio/out \
+    --fe-adapter checkpoints/fe_adapter_full.pt \
+    --decoder    checkpoints/decoder_only.pt
+# per file -> audio/out/<name>_restored48k.wav  +  <name>_orig48k.wav (naive-upsampled, for A/B)
+```
+
+- **Input**: any sample rate / format `ffmpeg`/libsndfile reads (the demo `audio/` are 8 kHz stereo
+  call recordings). Input is peak-normalized and resampled to 16 kHz for the FE.
+- **Stereo** (e.g. agent/customer on separate channels) is restored **per channel** and recombined to
+  stereo; pass `--mono` to downmix first.
+- Long clips are windowed (`--chunk`, default 35 s) with a click-free output-domain crossfade.
+- **bf16** autocast on by default; RTF ≈ 0.03 on an RTX 3090 Ti. CPU works (no GPU) but is slow.
+- Needs `transformers`, `descript-audio-codec` (`dac`), `torchaudio`, `soundfile` — **no `peft`**
+  (the adapter is merged at load). Note: `peft` against bleeding-edge `transformers` (≥5.5) can break
+  imports; the merge path side-steps that.
 
 ## Deps note
 `bootstrap_fe.sh` builds a targeted venv (torch cu128, transformers, peft, datasets, soundfile, wandb).
@@ -102,4 +153,6 @@ together** (audiotools soft-pins old protobuf; wandb/numpy clash otherwise):
 | `run_fe_callcentre.sh` | on-pod: prepare data → FE finetune |
 | `train_decoder_callcentre.py` | stage-2/3 DAC decoder + GAN (frozen FE), bf16, grad-accum |
 | `run_decoder_callcentre.sh` / `go_decoder_b6w6.sh` | on-pod: decoder finetune launchers |
+| `pod_prep_infer.py` | on-pod: slim `last.pt`s → `fe_adapter_full.pt` (144 tensors) + `decoder_only.pt` |
+| `infer_callcentre.py` | **local inference**: restore telephony audio → 48 kHz (merges LoRA, no `peft`) |
 | `sync_and_launch.sh` | local: rsync repo to the pod |

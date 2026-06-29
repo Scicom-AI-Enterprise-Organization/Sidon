@@ -213,7 +213,6 @@ wandb/
 notebooks/
 *.ckpt
 sidon_runs/
-*.mp3
 *.wav
 *.mp4
 exported/
@@ -225,3 +224,6 @@ runpod/*.log
 *_lora.pt
 fe_callcentre/
 decoder_callcentre/
+
+# inference outputs
+audio/out/
