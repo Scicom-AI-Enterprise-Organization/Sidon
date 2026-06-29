@@ -48,6 +48,23 @@ ssh <pod> 'setsid bash /Sidon/runpod/go_decoder_b6w6.sh >/Sidon/decoder_train.lo
 Tip: drive long steps **detached** (`setsid … </dev/null >log 2>&1 &`) and poll the log — the
 RunPod SSH proxy is intermittently congested. Keep launch commands tiny (see `go_decoder_b6w6.sh`).
 
+## Expanding the teacher pool (clean_extra)
+
+Beyond EARS+Expresso (~72 h), more clean ≥44 kHz speech is wired in via the
+DNSMOS-filtered `clean_teacher_datasets.json` (192 HF datasets with background-noise
+MOS ≥ the EARS+Expresso baseline of 3.64; built by `../discover/noisefilter/`). The
+`clean_extra` source streams the **top-N cleanest** (by `bak`), capped per dataset,
+into `/data/clean48k/extra/<repo>/` (mono wav, native SR) — the trainer globs it like
+the rest. License intentionally **not** filtered.
+
+```bash
+# top-60 cleanest, <=1500 clips each (defaults; ~40 GB):
+python runpod/prepare_clean48k.py --sources clean_extra --clean-topn 60 --clean-max-clips 1500
+# run_fe_callcentre.sh now includes clean_extra by default; tune via env:
+CLEAN_TOPN=100 CLEAN_MAX_CLIPS=2000 bash runpod/run_fe_callcentre.sh
+```
+Decode uses `Audio(decode=False)` + soundfile (no `torchcodec` needed for datasets≥5).
+
 ## wandb
 - FE (stage 1): https://wandb.ai/aies-scicom-scicom-ai/sidon/runs/fe-callcentre-d24-run1
 - Decoder: https://wandb.ai/aies-scicom-scicom-ai/sidon/runs/decoder-callcentre-3072v2
@@ -148,7 +165,8 @@ together** (audiotools soft-pins old protobuf; wandb/numpy clash otherwise):
 |---|---|
 | `launch_pod.py` | provision H100 (US, SECURE, `/`-only) |
 | `bootstrap_fe.sh` | targeted venv for the call-centre finetune |
-| `prepare_clean48k.py` | download EARS + Expresso clean 48k → `/data/clean48k` |
+| `prepare_clean48k.py` | download EARS + Expresso + `clean_extra` (DNSMOS-filtered HF) → `/data/clean48k` |
+| `clean_teacher_datasets.json` | 192 DNSMOS-clean ≥44k HF datasets (bak ≥ 3.64), ranked; consumed by `clean_extra` |
 | `train_fe_callcentre.py` | stage-1 FE distillation (24L w2v-BERT + LoRA, telephony degrade) |
 | `run_fe_callcentre.sh` | on-pod: prepare data → FE finetune |
 | `train_decoder_callcentre.py` | stage-2/3 DAC decoder + GAN (frozen FE), bf16, grad-accum |

@@ -22,14 +22,18 @@ WIN=${WIN:-12}
 LR=${LR:-2e-5}
 NUM_WORKERS=${NUM_WORKERS:-8}
 EARS_SPEAKERS=${EARS_SPEAKERS:-30}
-SOURCES=${SOURCES:-ears,expresso_read,expresso_conv}
+# clean_extra = DNSMOS-filtered ≥44k HF datasets (clean_teacher_datasets.json), top-N cleanest.
+SOURCES=${SOURCES:-ears,expresso_read,expresso_conv,clean_extra}
+CLEAN_TOPN=${CLEAN_TOPN:-60}
+CLEAN_MAX_CLIPS=${CLEAN_MAX_CLIPS:-1500}
 mkdir -p /data /hf_cache "$REPO/fe_callcentre"
 
 # ---- 1. clean data ----------------------------------------------------------
 if [ ! -d /data/clean48k ] || [ -z "$(ls -A /data/clean48k 2>/dev/null)" ]; then
     echo "===== [run] downloading clean 48k speech ($SOURCES) ====="
     "$VENV/bin/python" runpod/prepare_clean48k.py --out /data/clean48k \
-        --ears-speakers "$EARS_SPEAKERS" --sources "$SOURCES"
+        --ears-speakers "$EARS_SPEAKERS" --sources "$SOURCES" \
+        --clean-topn "$CLEAN_TOPN" --clean-max-clips "$CLEAN_MAX_CLIPS"
 else
     echo "===== [run] /data/clean48k present — skipping data prep ====="
 fi

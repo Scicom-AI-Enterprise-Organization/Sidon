@@ -1,0 +1,2762 @@
+{
+ "threshold_bak": 3.644,
+ "metric": "DNSMOS P.835 bak (background-noise MOS)",
+ "baseline": "EARS+Expresso bak mean 3.644",
+ "n": 192,
+ "datasets": [
+  {
+   "id": "SynDataLab-EN/tts-pretrain-clones-3m-mos",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.223,
+   "ovrl": 3.529,
+   "language": [
+    "en"
+   ],
+   "downloads": 10015,
+   "dur_s": 14.55
+  },
+  {
+   "id": "SynDataLab-EN-Refs/tts-pretrain-refs-3k-mos",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.219,
+   "ovrl": 3.526,
+   "language": [
+    "en"
+   ],
+   "downloads": 115,
+   "dur_s": 17.14
+  },
+  {
+   "id": "speech-uk/opentts-oleksa",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.208,
+   "ovrl": 3.449,
+   "language": [
+    "uk"
+   ],
+   "downloads": 14,
+   "dur_s": 6.46
+  },
+  {
+   "id": "fosters/lagodny-tsmok-iury-zhygamont_all",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.196,
+   "ovrl": 3.444,
+   "language": [
+    "be"
+   ],
+   "downloads": 38,
+   "dur_s": 12.48
+  },
+  {
+   "id": "MatrixStudio/TTS-CCabNavMSC",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.194,
+   "ovrl": 3.474,
+   "language": [
+    "zh"
+   ],
+   "downloads": 20,
+   "dur_s": 6.28
+  },
+  {
+   "id": "ALEKAS/ToneBooksPlus-Grigorii",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.179,
+   "ovrl": 3.419,
+   "language": [
+    "ru"
+   ],
+   "downloads": 58,
+   "dur_s": 5.25
+  },
+  {
+   "id": "fosters/uladzimir-karatkevich-dzikae-paliavanne-karalia-stakha-aleg-garbuz_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.177,
+   "ovrl": 3.375,
+   "language": [
+    "be"
+   ],
+   "downloads": 44,
+   "dur_s": 12.11
+  },
+  {
+   "id": "SPRINGLab/IndicTTS_Tamil",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.172,
+   "ovrl": 3.405,
+   "language": [
+    "ta"
+   ],
+   "downloads": 186,
+   "dur_s": 6.35
+  },
+  {
+   "id": "sachin6624/malayalam-tts-pro-voice",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.172,
+   "ovrl": 3.455,
+   "language": [
+    "ml"
+   ],
+   "downloads": 36,
+   "dur_s": 18.19
+  },
+  {
+   "id": "somu9/iisc_mono_hindi_female",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.168,
+   "ovrl": 3.349,
+   "language": [
+    "hi"
+   ],
+   "downloads": 321,
+   "dur_s": 4.97
+  },
+  {
+   "id": "fosters/uladzimir-karatkevich-dzikae-paliavanne-karalia-stakha-aleg-garbuz-output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.167,
+   "ovrl": 3.388,
+   "language": [
+    "be"
+   ],
+   "downloads": 72,
+   "dur_s": 10.62
+  },
+  {
+   "id": "fosters/vasil_bykau_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.166,
+   "ovrl": 3.385,
+   "language": [
+    "be"
+   ],
+   "downloads": 51,
+   "dur_s": 10.92
+  },
+  {
+   "id": "MatrixStudio/TTS-SCCusSerFSC",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.165,
+   "ovrl": 3.373,
+   "language": [
+    "zh"
+   ],
+   "downloads": 5,
+   "dur_s": 4.62
+  },
+  {
+   "id": "data-lab-voice/echo-tts-en-benchmarks-v1",
+   "audio_col": "echo_tts_af_bella",
+   "mode_sr": 44100,
+   "bak": 4.164,
+   "ovrl": 3.225,
+   "language": [
+    "en"
+   ],
+   "downloads": 73,
+   "dur_s": 2.72
+  },
+  {
+   "id": "fosters/vasil_zue_nok_syaliba_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.161,
+   "ovrl": 3.417,
+   "language": [
+    "be"
+   ],
+   "downloads": 39,
+   "dur_s": 11.62
+  },
+  {
+   "id": "manassehzw/sna-manasseh-150-raw",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.159,
+   "ovrl": 3.386,
+   "language": [
+    "sna"
+   ],
+   "downloads": 23,
+   "dur_s": 5.75
+  },
+  {
+   "id": "fosters/anatol_vyartsinski_pesnya_pra_hleb_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.159,
+   "ovrl": 3.432,
+   "language": [
+    "be"
+   ],
+   "downloads": 33,
+   "dur_s": 12.81
+  },
+  {
+   "id": "SynDataLab-JA-Refs/Irodori-Ja-Spk2-10k",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.157,
+   "ovrl": 3.336,
+   "language": "ja",
+   "downloads": 74,
+   "dur_s": 6.69
+  },
+  {
+   "id": "fosters/anatol_vyartsinski_pesnya_pra_hleb_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.153,
+   "ovrl": 3.384,
+   "language": [
+    "be"
+   ],
+   "downloads": 43,
+   "dur_s": 11.96
+  },
+  {
+   "id": "SPRINGLab/IndicTTS_Assamese",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.15,
+   "ovrl": 3.357,
+   "language": [
+    "as"
+   ],
+   "downloads": 96,
+   "dur_s": 3.07
+  },
+  {
+   "id": "fosters/legendy-i-padanni_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.15,
+   "ovrl": 3.375,
+   "language": [
+    "be"
+   ],
+   "downloads": 33,
+   "dur_s": 13.34
+  },
+  {
+   "id": "fosters/kuzma_chorny_makarkavyh_volka_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.149,
+   "ovrl": 3.343,
+   "language": [
+    "be"
+   ],
+   "downloads": 37,
+   "dur_s": 12.33
+  },
+  {
+   "id": "fosters/ales_zhuk_praklytaya_lyubow_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.148,
+   "ovrl": 3.389,
+   "language": [
+    "be"
+   ],
+   "downloads": 36,
+   "dur_s": 13.05
+  },
+  {
+   "id": "fosters/yanka_sipakou_odzium_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.146,
+   "ovrl": 3.296,
+   "language": [
+    "be"
+   ],
+   "downloads": 37,
+   "dur_s": 11.32
+  },
+  {
+   "id": "fosters/ivan_shamyakin_sertsa_na_daloni_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.145,
+   "ovrl": 3.375,
+   "language": [
+    "be"
+   ],
+   "downloads": 100,
+   "dur_s": 11.51
+  },
+  {
+   "id": "SynDataLab-JA-Refs/irodori-refs-10k-v2",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.145,
+   "ovrl": 3.326,
+   "language": [
+    "ja"
+   ],
+   "downloads": 127,
+   "dur_s": 9.66
+  },
+  {
+   "id": "trysem/malayalam-tts-pro-voice",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.145,
+   "ovrl": 3.38,
+   "language": [
+    "ml"
+   ],
+   "downloads": 39,
+   "dur_s": 18.19
+  },
+  {
+   "id": "fosters/maksim_tank_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.145,
+   "ovrl": 3.339,
+   "language": [
+    "be"
+   ],
+   "downloads": 32,
+   "dur_s": 11.79
+  },
+  {
+   "id": "alexandrainst/nota",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.143,
+   "ovrl": 3.336,
+   "language": [
+    "da"
+   ],
+   "downloads": 458,
+   "dur_s": 17.54
+  },
+  {
+   "id": "fosters/ivan_navumenka_sasna_pry_daroze_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.142,
+   "ovrl": 3.286,
+   "language": [
+    "be"
+   ],
+   "downloads": 97,
+   "dur_s": 12.23
+  },
+  {
+   "id": "speech-uk/tts-crh-abibullah",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.142,
+   "ovrl": 3.187,
+   "language": [
+    "crh"
+   ],
+   "downloads": 18,
+   "dur_s": 3.58
+  },
+  {
+   "id": "anian0707/hindi-tts-dataset",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.138,
+   "ovrl": 3.248,
+   "language": [
+    "hi"
+   ],
+   "downloads": 111,
+   "dur_s": 7.67
+  },
+  {
+   "id": "speech-uk/tts-crh-sevil",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.137,
+   "ovrl": 3.244,
+   "language": [
+    "crh"
+   ],
+   "downloads": 7,
+   "dur_s": 6.21
+  },
+  {
+   "id": "SPRINGLab/IndicTTS-Hindi",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.133,
+   "ovrl": 3.314,
+   "language": [
+    "hi"
+   ],
+   "downloads": 572,
+   "dur_s": 5.67
+  },
+  {
+   "id": "fosters/ivan-melezh-zavei-snezhan-valer-budzevich_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.131,
+   "ovrl": 3.39,
+   "language": [
+    "be"
+   ],
+   "downloads": 41,
+   "dur_s": 11.95
+  },
+  {
+   "id": "futureDoctor/turkic_tts_dataset",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.13,
+   "ovrl": 3.299,
+   "language": [
+    "az",
+    "ba"
+   ],
+   "downloads": 110,
+   "dur_s": 4.9
+  },
+  {
+   "id": "fosters/ales_zhuk_praklytaya_lyubow_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.13,
+   "ovrl": 3.37,
+   "language": [
+    "be"
+   ],
+   "downloads": 49,
+   "dur_s": 11.33
+  },
+  {
+   "id": "fosters/dzhozef_redzyard_kipling_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.13,
+   "ovrl": 3.294,
+   "language": [
+    "be"
+   ],
+   "downloads": 40,
+   "dur_s": 11.84
+  },
+  {
+   "id": "AigizK/bashkort_tts_dataset",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.13,
+   "ovrl": 3.299,
+   "language": [
+    "ba"
+   ],
+   "downloads": 30,
+   "dur_s": 4.9
+  },
+  {
+   "id": "SPRINGLab/IndicTTS_Kannada",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.129,
+   "ovrl": 3.264,
+   "language": [
+    "kn"
+   ],
+   "downloads": 188,
+   "dur_s": 6.63
+  },
+  {
+   "id": "fosters/uilyam_folkner_pah_verbeny_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.126,
+   "ovrl": 3.352,
+   "language": [
+    "be"
+   ],
+   "downloads": 45,
+   "dur_s": 11.01
+  },
+  {
+   "id": "ultemica/wuthering-waves-voices",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.126,
+   "ovrl": 3.367,
+   "language": [
+    "zh",
+    "ja",
+    "en",
+    "ko"
+   ],
+   "downloads": 55,
+   "dur_s": 10.73
+  },
+  {
+   "id": "fosters/dzhozef_redzyard_kipling_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.125,
+   "ovrl": 3.239,
+   "language": [
+    "be"
+   ],
+   "downloads": 33,
+   "dur_s": 11.67
+  },
+  {
+   "id": "archivartaunik/Jevanhielle_Zyhamont_outChecked",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.124,
+   "ovrl": 3.275,
+   "language": [
+    "be"
+   ],
+   "downloads": 32,
+   "dur_s": 5.63
+  },
+  {
+   "id": "fosters/lagodny-tsmok-iury-zhygamont-output_original",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.122,
+   "ovrl": 3.357,
+   "language": [
+    "be"
+   ],
+   "downloads": 51,
+   "dur_s": 11.61
+  },
+  {
+   "id": "multilingual-tts/open-bible",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.12,
+   "ovrl": 3.216,
+   "language": [
+    "arb",
+    "asm",
+    "ben",
+    "ckb",
+    "hne",
+    "nya",
+    "dwr",
+    "luo",
+    "ewe",
+    "gmv",
+    "gof",
+    "guj",
+    "hat",
+    "hau",
+    "hil",
+    "hin",
+    "ibo",
+    "kan",
+    "kik",
+    "lin",
+    "lug",
+    "mal",
+    "mar",
+    "nde",
+    "nep",
+    "orm",
+    "pan",
+    "sna",
+    "swh",
+    "tam",
+    "tel",
+    "tur",
+    "twi",
+    "urd",
+    "vie",
+    "yor"
+   ],
+   "downloads": 2149,
+   "dur_s": 11.14
+  },
+  {
+   "id": "SynDataLab-EN/echo-clones-4m-en",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.118,
+   "ovrl": 3.309,
+   "language": [
+    "en"
+   ],
+   "downloads": 8631,
+   "dur_s": 4.98
+  },
+  {
+   "id": "fosters/mar_yan_duksa_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.118,
+   "ovrl": 3.328,
+   "language": [
+    "be"
+   ],
+   "downloads": 33,
+   "dur_s": 11.42
+  },
+  {
+   "id": "fosters/raisa_baravikova_vershy_pra_kahanne_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.118,
+   "ovrl": 3.314,
+   "language": [
+    "be"
+   ],
+   "downloads": 31,
+   "dur_s": 10.95
+  },
+  {
+   "id": "linagora/linto-dataset-audio-ar-tn-augmented",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.116,
+   "ovrl": 3.303,
+   "language": [
+    "ar"
+   ],
+   "downloads": 1739,
+   "dur_s": 164.56
+  },
+  {
+   "id": "fosters/ivan_shamyakin_tryvozhnae_shchastse_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.116,
+   "ovrl": 3.306,
+   "language": [
+    "be"
+   ],
+   "downloads": 102,
+   "dur_s": 11.95
+  },
+  {
+   "id": "czyzi0/the-mc-speech-dataset",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.116,
+   "ovrl": 3.294,
+   "language": [
+    "pl"
+   ],
+   "downloads": 383,
+   "dur_s": 3.04
+  },
+  {
+   "id": "fosters/ales-krautsevich-karotkaia-gistoryia-belarusi-uladzimir-lisouski_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.115,
+   "ovrl": 3.413,
+   "language": [
+    "be"
+   ],
+   "downloads": 37,
+   "dur_s": 11.55
+  },
+  {
+   "id": "fosters/ivan_shamyakin_tryvozhnae_shchastse_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.112,
+   "ovrl": 3.314,
+   "language": [
+    "be"
+   ],
+   "downloads": 84,
+   "dur_s": 10.97
+  },
+  {
+   "id": "SynDataLab-JA/Irodori-Ja-500M-v2-vs-600M-v3-compare-20",
+   "audio_col": "v2_500m",
+   "mode_sr": 48000,
+   "bak": 4.112,
+   "ovrl": 3.249,
+   "language": [
+    "ja"
+   ],
+   "downloads": 36,
+   "dur_s": 8.24
+  },
+  {
+   "id": "Thorsten-Voice/TV-44kHz-Full",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.111,
+   "ovrl": 3.101,
+   "language": [
+    "de"
+   ],
+   "downloads": 759,
+   "dur_s": 5.34
+  },
+  {
+   "id": "SynDataLab-EN-Refs/echo-ref-speakers-4k-en",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.111,
+   "ovrl": 3.3,
+   "language": [
+    "en"
+   ],
+   "downloads": 42,
+   "dur_s": 8.63
+  },
+  {
+   "id": "SynDataLab-JA/irodori-clones-3m-v2-no-emoji",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.11,
+   "ovrl": 3.09,
+   "language": [
+    "ja"
+   ],
+   "downloads": 8676,
+   "dur_s": 4.39
+  },
+  {
+   "id": "fosters/kuzma_chorny_zyamlya_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.108,
+   "ovrl": 3.344,
+   "language": [
+    "be"
+   ],
+   "downloads": 55,
+   "dur_s": 11.81
+  },
+  {
+   "id": "fosters/kuzma_chorny_zyamlya_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.107,
+   "ovrl": 3.362,
+   "language": [
+    "be"
+   ],
+   "downloads": 87,
+   "dur_s": 11.59
+  },
+  {
+   "id": "langswap/dialogs-ru-emotional-conversations",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.106,
+   "ovrl": 3.279,
+   "language": [
+    "ru"
+   ],
+   "downloads": 2537,
+   "dur_s": 7.59
+  },
+  {
+   "id": "DatarrX/burmese-synthetic-speech-corpus",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.105,
+   "ovrl": 3.185,
+   "language": [
+    "my"
+   ],
+   "downloads": 231,
+   "dur_s": 3.08
+  },
+  {
+   "id": "MikhailT/hifi-tts",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.104,
+   "ovrl": 3.257,
+   "language": [
+    "en"
+   ],
+   "downloads": 2750,
+   "dur_s": 3.27
+  },
+  {
+   "id": "fosters/andre_marua_pakaranne_zolatam_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.103,
+   "ovrl": 3.285,
+   "language": [
+    "be"
+   ],
+   "downloads": 40,
+   "dur_s": 11.29
+  },
+  {
+   "id": "fosters/eryh_maryya_remark_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.101,
+   "ovrl": 3.302,
+   "language": [
+    "be"
+   ],
+   "downloads": 68,
+   "dur_s": 11.53
+  },
+  {
+   "id": "juanjucm/OpenHQ-SpeechT-GL-EN",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.101,
+   "ovrl": 3.282,
+   "language": [
+    "gl",
+    "en"
+   ],
+   "downloads": 135,
+   "dur_s": 6.08
+  },
+  {
+   "id": "fosters/bely_klyck_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.1,
+   "ovrl": 3.234,
+   "language": [
+    "be"
+   ],
+   "downloads": 43,
+   "dur_s": 9.29
+  },
+  {
+   "id": "fosters/yanka_bryl_ptushki_i_gne_zdy_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.099,
+   "ovrl": 3.304,
+   "language": [
+    "be"
+   ],
+   "downloads": 71,
+   "dur_s": 12.01
+  },
+  {
+   "id": "deepdml/openslr80-burmese",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.099,
+   "ovrl": 3.278,
+   "language": [
+    "my"
+   ],
+   "downloads": 58,
+   "dur_s": 5.97
+  },
+  {
+   "id": "SPRINGLab/IndicTTS_Rajasthani",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.099,
+   "ovrl": 3.124,
+   "language": [
+    "rj"
+   ],
+   "downloads": 46,
+   "dur_s": 5.22
+  },
+  {
+   "id": "Vikhrmodels/ToneBooks",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.098,
+   "ovrl": 3.145,
+   "language": [
+    "ru"
+   ],
+   "downloads": 212,
+   "dur_s": 8.07
+  },
+  {
+   "id": "fosters/eryh_maryya_remark_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.093,
+   "ovrl": 3.278,
+   "language": [
+    "be"
+   ],
+   "downloads": 61,
+   "dur_s": 11.89
+  },
+  {
+   "id": "fosters/viktar_prau_dzin_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.092,
+   "ovrl": 3.259,
+   "language": [
+    "be"
+   ],
+   "downloads": 47,
+   "dur_s": 11.15
+  },
+  {
+   "id": "fosters/yakub_kolas_novaya_zyamlya_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.092,
+   "ovrl": 3.355,
+   "language": [
+    "be"
+   ],
+   "downloads": 52,
+   "dur_s": 13.94
+  },
+  {
+   "id": "fosters/astryd_lindgren_braty_lvinae_sertsa_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.091,
+   "ovrl": 3.265,
+   "language": [
+    "be"
+   ],
+   "downloads": 50,
+   "dur_s": 11.99
+  },
+  {
+   "id": "fosters/yakub_kolas_novaya_zyamlya_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.091,
+   "ovrl": 3.286,
+   "language": [
+    "be"
+   ],
+   "downloads": 50,
+   "dur_s": 11.12
+  },
+  {
+   "id": "fosters/genadz_pashkou_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.091,
+   "ovrl": 3.202,
+   "language": [
+    "be"
+   ],
+   "downloads": 39,
+   "dur_s": 11.92
+  },
+  {
+   "id": "masuidrive/cv-corpus-1.0-en-client_id-grouped",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.087,
+   "ovrl": 3.27,
+   "language": [
+    "en"
+   ],
+   "downloads": 96,
+   "dur_s": 3.4
+  },
+  {
+   "id": "adalat-ai/in22-legal",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.087,
+   "ovrl": 3.083,
+   "language": [
+    "ml",
+    "hi",
+    "kn"
+   ],
+   "downloads": 2,
+   "dur_s": 13.14
+  },
+  {
+   "id": "speech-uk/opentts-tetiana",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.086,
+   "ovrl": 3.157,
+   "language": [
+    "uk"
+   ],
+   "downloads": 42,
+   "dur_s": 6.13
+  },
+  {
+   "id": "fosters/ales_razanau_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.085,
+   "ovrl": 3.242,
+   "language": [
+    "be"
+   ],
+   "downloads": 40,
+   "dur_s": 11.22
+  },
+  {
+   "id": "fosters/ales_razanau_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.085,
+   "ovrl": 3.211,
+   "language": [
+    "be"
+   ],
+   "downloads": 32,
+   "dur_s": 10.92
+  },
+  {
+   "id": "SPRINGLab/IndicTTS_Manipuri",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.082,
+   "ovrl": 3.137,
+   "language": [
+    "mni"
+   ],
+   "downloads": 91,
+   "dur_s": 4.12
+  },
+  {
+   "id": "ngia/ASR_pulaar",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.082,
+   "ovrl": 3.223,
+   "language": [
+    "ff"
+   ],
+   "downloads": 63,
+   "dur_s": 6.24
+  },
+  {
+   "id": "fosters/kuzma_chorny_poshuki_buduchyni_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.081,
+   "ovrl": 3.295,
+   "language": [
+    "be"
+   ],
+   "downloads": 44,
+   "dur_s": 12.23
+  },
+  {
+   "id": "fosters/andre_marua_pakaranne_zolatam_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.081,
+   "ovrl": 3.25,
+   "language": [
+    "be"
+   ],
+   "downloads": 30,
+   "dur_s": 12.22
+  },
+  {
+   "id": "fosters/raisa_baravikova_vasmiradkou_i_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.08,
+   "ovrl": 3.211,
+   "language": [
+    "be"
+   ],
+   "downloads": 31,
+   "dur_s": 10.65
+  },
+  {
+   "id": "Professor/kinyarwanda-tts-dataset-kin",
+   "audio_col": "audio_path",
+   "mode_sr": 44100,
+   "bak": 4.075,
+   "ovrl": 3.293,
+   "language": [],
+   "downloads": 95,
+   "dur_s": 5.5
+  },
+  {
+   "id": "humairawan/AnimeSpeech",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.073,
+   "ovrl": 3.231,
+   "language": [
+    "en"
+   ],
+   "downloads": 507,
+   "dur_s": 4.09
+  },
+  {
+   "id": "ShoukanLabs/AniSpeech",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.073,
+   "ovrl": 3.231,
+   "language": [
+    "en"
+   ],
+   "downloads": 280,
+   "dur_s": 4.09
+  },
+  {
+   "id": "fosters/dzintra_shultse_robertsik_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.072,
+   "ovrl": 3.288,
+   "language": [
+    "be"
+   ],
+   "downloads": 39,
+   "dur_s": 11.08
+  },
+  {
+   "id": "bookbot/slr72_dataset",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.072,
+   "ovrl": 3.166,
+   "language": [
+    "es"
+   ],
+   "downloads": 76,
+   "dur_s": 5.49
+  },
+  {
+   "id": "fosters/shata_rustaveli_vitsyaz_u_tygravai_shkury_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.071,
+   "ovrl": 3.279,
+   "language": [
+    "be"
+   ],
+   "downloads": 38,
+   "dur_s": 11.45
+  },
+  {
+   "id": "SPRINGLab/IndicTTS_Odia",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.07,
+   "ovrl": 3.204,
+   "language": [
+    "od"
+   ],
+   "downloads": 43,
+   "dur_s": 5.29
+  },
+  {
+   "id": "fosters/ernest_heminguei_stary_chalavek_i_mora_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.07,
+   "ovrl": 3.325,
+   "language": [
+    "be"
+   ],
+   "downloads": 34,
+   "dur_s": 11.59
+  },
+  {
+   "id": "fosters/taras_shau_chenka_vershy_paemy_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.068,
+   "ovrl": 3.312,
+   "language": [
+    "be"
+   ],
+   "downloads": 39,
+   "dur_s": 12.32
+  },
+  {
+   "id": "fosters/eryh_raspe_prygody_barona_myunhau_zena_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.066,
+   "ovrl": 3.246,
+   "language": [
+    "be"
+   ],
+   "downloads": 43,
+   "dur_s": 11.54
+  },
+  {
+   "id": "fosters/Antuan_de_Sent-Ekziupiery_Planieta_ludziei_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.066,
+   "ovrl": 3.259,
+   "language": [
+    "be"
+   ],
+   "downloads": 59,
+   "dur_s": 9.93
+  },
+  {
+   "id": "fosters/iagan_frydryh_shyler_kubak_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.065,
+   "ovrl": 3.046,
+   "language": [
+    "be"
+   ],
+   "downloads": 36,
+   "dur_s": 8.27
+  },
+  {
+   "id": "ebellob/annotated_catalan_common_voice_v17_cleaned_enhanced",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.064,
+   "ovrl": 3.244,
+   "language": [
+    "ca"
+   ],
+   "downloads": 682,
+   "dur_s": 7.11
+  },
+  {
+   "id": "atlithor/talromur3_without_emotions",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.063,
+   "ovrl": 3.143,
+   "language": [
+    "is"
+   ],
+   "downloads": 7,
+   "dur_s": 4.35
+  },
+  {
+   "id": "MushanW/GLOBE_V2",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.062,
+   "ovrl": 3.202,
+   "language": [
+    "en"
+   ],
+   "downloads": 2373,
+   "dur_s": 3.36
+  },
+  {
+   "id": "SPRINGLab/IndicTTS_Malayalam",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.062,
+   "ovrl": 3.071,
+   "language": [
+    "ml"
+   ],
+   "downloads": 184,
+   "dur_s": 4.97
+  },
+  {
+   "id": "fosters/ivan-melezh-zavei-snezhan-valer-budzevich-output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.062,
+   "ovrl": 3.341,
+   "language": [
+    "be"
+   ],
+   "downloads": 72,
+   "dur_s": 13.15
+  },
+  {
+   "id": "fosters/ivan_navumenka_sasna_pry_daroze_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.062,
+   "ovrl": 3.264,
+   "language": [
+    "be"
+   ],
+   "downloads": 44,
+   "dur_s": 11.22
+  },
+  {
+   "id": "fosters/raisa_baravikova_vershy_pra_kahanne_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.061,
+   "ovrl": 3.184,
+   "language": [
+    "be"
+   ],
+   "downloads": 39,
+   "dur_s": 10.95
+  },
+  {
+   "id": "SPRINGLab/IndicTTS_Bengali",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.061,
+   "ovrl": 3.329,
+   "language": [
+    "bn"
+   ],
+   "downloads": 117,
+   "dur_s": 4.45
+  },
+  {
+   "id": "Abdullah500/IndicTTS_BengaliOLD",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.061,
+   "ovrl": 3.329,
+   "language": [
+    "bn"
+   ],
+   "downloads": 30,
+   "dur_s": 4.45
+  },
+  {
+   "id": "fosters/kuzma_chorny_poshuki_buduchyni_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.06,
+   "ovrl": 3.204,
+   "language": [
+    "be"
+   ],
+   "downloads": 75,
+   "dur_s": 12.4
+  },
+  {
+   "id": "fosters/ivan_ptashnikau_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.06,
+   "ovrl": 3.196,
+   "language": [
+    "be"
+   ],
+   "downloads": 33,
+   "dur_s": 7.04
+  },
+  {
+   "id": "OpenFormosa/common_voice_25_zh-TW",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.059,
+   "ovrl": 3.106,
+   "language": [
+    "zh"
+   ],
+   "downloads": 325,
+   "dur_s": 3.47
+  },
+  {
+   "id": "fablevi/one_voice_FACEBOOK_PARQUET",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.059,
+   "ovrl": 3.239,
+   "language": [
+    "hu"
+   ],
+   "downloads": 37,
+   "dur_s": 2.48
+  },
+  {
+   "id": "ultemica/genshin-impact-voices",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.058,
+   "ovrl": 3.173,
+   "language": [
+    "zh",
+    "ja",
+    "en",
+    "ko"
+   ],
+   "downloads": 348,
+   "dur_s": 3.95
+  },
+  {
+   "id": "vinaybabu/voice_tech_for_all_challenge_samples_output",
+   "audio_col": "reference_audio",
+   "mode_sr": 48000,
+   "bak": 4.056,
+   "ovrl": 3.283,
+   "language": [
+    "te",
+    "bho",
+    "mag",
+    "gu",
+    "bn",
+    "hi",
+    "mr",
+    "mai",
+    "hne",
+    "kn",
+    "en"
+   ],
+   "downloads": 4,
+   "dur_s": 16.44
+  },
+  {
+   "id": "fosters/raisa_baravikova_vasmiradkou_i_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.054,
+   "ovrl": 3.204,
+   "language": [
+    "be"
+   ],
+   "downloads": 39,
+   "dur_s": 11.24
+  },
+  {
+   "id": "fosters/ivan_shamyakin_sertsa_na_daloni_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.052,
+   "ovrl": 3.208,
+   "language": [
+    "be"
+   ],
+   "downloads": 88,
+   "dur_s": 11.15
+  },
+  {
+   "id": "srezas/farsi_voice_dataset",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.05,
+   "ovrl": 3.135,
+   "language": [
+    "fa"
+   ],
+   "downloads": 787,
+   "dur_s": 3.58
+  },
+  {
+   "id": "fosters/ivan-melezh-podykh-navalnitsy-valer-budzevich-output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.043,
+   "ovrl": 3.32,
+   "language": [
+    "be"
+   ],
+   "downloads": 73,
+   "dur_s": 11.53
+  },
+  {
+   "id": "kizuna-intelligence/AItuber-Persona-Voices-JA",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.041,
+   "ovrl": 3.067,
+   "language": [
+    "ja"
+   ],
+   "downloads": 447,
+   "dur_s": 8.53
+  },
+  {
+   "id": "fosters/genadz_pashkou_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.041,
+   "ovrl": 3.129,
+   "language": [
+    "be"
+   ],
+   "downloads": 30,
+   "dur_s": 11.84
+  },
+  {
+   "id": "lilgoose777/nepali_speech_english_translation_shuffle_dataset",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.04,
+   "ovrl": 3.264,
+   "language": [
+    "ne",
+    "en"
+   ],
+   "downloads": 23,
+   "dur_s": 8.43
+  },
+  {
+   "id": "fosters/ivan-navumenka-zhul-vern_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.039,
+   "ovrl": 3.124,
+   "language": [
+    "be"
+   ],
+   "downloads": 34,
+   "dur_s": 10.9
+  },
+  {
+   "id": "fosters/stefan_tsvei_g_nyabachnaya_kalektsyya_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.038,
+   "ovrl": 3.099,
+   "language": [
+    "be"
+   ],
+   "downloads": 31,
+   "dur_s": 11.53
+  },
+  {
+   "id": "ghananlpcommunity/asante-twi-bible-speech-phonemes",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.035,
+   "ovrl": 3.225,
+   "language": [
+    "tw"
+   ],
+   "downloads": 299,
+   "dur_s": 7.04
+  },
+  {
+   "id": "deepdml/openslr65-tamil",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.034,
+   "ovrl": 2.823,
+   "language": [
+    "ta"
+   ],
+   "downloads": 20,
+   "dur_s": 5.27
+  },
+  {
+   "id": "fosters/ernest_heminguei_stary_chalavek_i_mora_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.033,
+   "ovrl": 3.154,
+   "language": [
+    "be"
+   ],
+   "downloads": 45,
+   "dur_s": 11.97
+  },
+  {
+   "id": "somu9/iitm_mono_hindi_female",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.033,
+   "ovrl": 3.134,
+   "language": [
+    "hi"
+   ],
+   "downloads": 65,
+   "dur_s": 5.34
+  },
+  {
+   "id": "Sellopale/omnilingualpaleoi",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.032,
+   "ovrl": 3.287,
+   "language": [
+    "aae",
+    "aal",
+    "aao",
+    "abn",
+    "abr",
+    "abs",
+    "abv",
+    "acm",
+    "acw",
+    "acx",
+    "adf",
+    "aeb",
+    "aec",
+    "afb",
+    "afo",
+    "ahl",
+    "ahs",
+    "aju",
+    "ala",
+    "aln",
+    "alo",
+    "amu",
+    "anc",
+    "ank",
+    "anp",
+    "anw",
+    "aom",
+    "apc",
+    "apd",
+    "arq",
+    "ars",
+    "ary",
+    "arz",
+    "avl",
+    "awo",
+    "ayl",
+    "ayp",
+    "bbu",
+    "bcs",
+    "bcy",
+    "bda",
+    "bde",
+    "bdm",
+    "bew",
+    "bhb",
+    "bhh",
+    "bho",
+    "bhp",
+    "bhr",
+    "bjj",
+    "bjk",
+    "bjn",
+    "bjt",
+    "bky",
+    "bmm",
+    "bmq",
+    "bns",
+    "bou",
+    "bqg",
+    "bra",
+    "brh",
+    "brx",
+    "bsj",
+    "btm",
+    "bug",
+    "buo",
+    "bux",
+    "bwr",
+    "bxf",
+    "byc",
+    "bys",
+    "byx",
+    "bzc",
+    "bzw",
+    "ccg",
+    "cen",
+    "cfa",
+    "cgg",
+    "chq",
+    "ckl",
+    "ckr",
+    "cky",
+    "cte",
+    "ctl",
+    "dbd",
+    "dcc",
+    "deg",
+    "dgh",
+    "dje",
+    "dty",
+    "dzg",
+    "ebu",
+    "ego",
+    "eiv",
+    "ekr",
+    "elm",
+    "ets",
+    "etu",
+    "ext",
+    "eyo",
+    "fat",
+    "ffm",
+    "fia",
+    "fip",
+    "fkk",
+    "fuc",
+    "fue",
+    "fuf",
+    "fuh",
+    "fui",
+    "fuq",
+    "fuv",
+    "gbm",
+    "gbr",
+    "gby",
+    "gcc",
+    "gdf",
+    "ges",
+    "gjk",
+    "glw",
+    "gol",
+    "gom",
+    "gsl",
+    "gui",
+    "gur",
+    "guz",
+    "gwe",
+    "gyz",
+    "hah",
+    "hao",
+    "haw",
+    "hbb",
+    "hz",
+    "hia",
+    "hkk",
+    "hla",
+    "hno",
+    "hoj",
+    "hue",
+    "hul",
+    "hwo",
+    "ida",
+    "idu",
+    "ijc",
+    "ijn",
+    "ikw",
+    "ish",
+    "iso",
+    "its",
+    "itw",
+    "itz",
+    "jal",
+    "jax",
+    "jmx",
+    "jns",
+    "juk",
+    "juo",
+    "kai",
+    "kaj",
+    "ks",
+    "kbl",
+    "kbt",
+    "kcq",
+    "keu",
+    "kfe",
+    "kfk",
+    "kfp",
+    "kjc",
+    "kjk",
+    "kmy",
+    "kna",
+    "knn",
+    "kol",
+    "koo",
+    "kpo",
+    "kqo",
+    "ksd",
+    "kto",
+    "kj",
+    "kuh",
+    "kwm",
+    "kxp",
+    "kyx",
+    "lag",
+    "lcm",
+    "ldb",
+    "lij",
+    "lir",
+    "lkb",
+    "lla",
+    "lnu",
+    "loa",
+    "lto",
+    "lus",
+    "lwg",
+    "mab",
+    "maf",
+    "max",
+    "mde",
+    "mek",
+    "mer",
+    "meu",
+    "mfm",
+    "mfn",
+    "mfo",
+    "mfv",
+    "mgi",
+    "mig",
+    "miu",
+    "mkf",
+    "mlq",
+    "mne",
+    "mqy",
+    "mrr",
+    "mrt",
+    "msh",
+    "msw",
+    "mtr",
+    "mtu",
+    "mtx",
+    "mui",
+    "mxs",
+    "mxy",
+    "mzl",
+    "nal",
+    "nap",
+    "nbh",
+    "ncf",
+    "nco",
+    "ndi",
+    "ng",
+    "ngi",
+    "nhg",
+    "nhn",
+    "nhq",
+    "nja",
+    "noe",
+    "odk",
+    "odu",
+    "ogo",
+    "orc",
+    "pbs",
+    "pbt",
+    "pbu",
+    "pex",
+    "phr",
+    "pip",
+    "piy",
+    "pko",
+    "plt",
+    "pmq",
+    "pms",
+    "pmy",
+    "pnb",
+    "poc",
+    "poe",
+    "pow",
+    "pst",
+    "qug",
+    "qum",
+    "quv",
+    "rag",
+    "rob",
+    "rof",
+    "roo",
+    "rth",
+    "sau",
+    "say",
+    "scn",
+    "shu",
+    "si",
+    "sip",
+    "siw",
+    "sjr",
+    "skg",
+    "snc",
+    "snk",
+    "sol",
+    "sps",
+    "src",
+    "sro",
+    "ste",
+    "sua",
+    "tan",
+    "tbf",
+    "tcf",
+    "tcy",
+    "tdn",
+    "tdx",
+    "tgc",
+    "the",
+    "thq",
+    "thr",
+    "thv",
+    "tio",
+    "tkg",
+    "tkt",
+    "tlp",
+    "tpl",
+    "tpz",
+    "tqp",
+    "trp",
+    "trq",
+    "ttj",
+    "ttr",
+    "ttu",
+    "tul",
+    "tuq",
+    "tuv",
+    "tuy",
+    "tvo",
+    "twu",
+    "txs",
+    "txy",
+    "uki",
+    "uzn",
+    "vai",
+    "ver",
+    "vmc",
+    "vmj",
+    "vmm",
+    "vmp",
+    "vmz",
+    "vro",
+    "wci",
+    "weo",
+    "wja",
+    "wji",
+    "wof",
+    "xmv",
+    "xmw",
+    "xpe",
+    "xti",
+    "xtu",
+    "yay",
+    "ydd",
+    "yer",
+    "yes",
+    "zga",
+    "zoh",
+    "zor",
+    "zpv",
+    "zpy",
+    "ztg",
+    "ztn",
+    "ztp",
+    "zts",
+    "ztu"
+   ],
+   "downloads": 3010,
+   "dur_s": 82.0
+  },
+  {
+   "id": "SynDataLab-JA-Refs/irodori-refs-10k",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.031,
+   "ovrl": 3.164,
+   "language": [
+    "ja"
+   ],
+   "downloads": 116,
+   "dur_s": 9.74
+  },
+  {
+   "id": "shoron08/irodori-refs-10k",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 4.031,
+   "ovrl": 3.164,
+   "language": [
+    "ja"
+   ],
+   "downloads": 52,
+   "dur_s": 9.74
+  },
+  {
+   "id": "fosters/dzintra_shultse_robertsik_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.03,
+   "ovrl": 3.197,
+   "language": [
+    "be"
+   ],
+   "downloads": 32,
+   "dur_s": 12.79
+  },
+  {
+   "id": "Bretagne/Lingua_Libre_br",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.027,
+   "ovrl": 2.643,
+   "language": [
+    "br"
+   ],
+   "downloads": 368,
+   "dur_s": 1.25
+  },
+  {
+   "id": "ray0rf1re/GLaDOS-audio-v2",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.017,
+   "ovrl": 3.089,
+   "language": [
+    "en"
+   ],
+   "downloads": 86,
+   "dur_s": 6.86
+  },
+  {
+   "id": "fosters/iagan_frydryh_shyler_kubak_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.017,
+   "ovrl": 3.01,
+   "language": [
+    "be"
+   ],
+   "downloads": 33,
+   "dur_s": 7.02
+  },
+  {
+   "id": "joujiboi/Galgame-VisualNovel-Reupload",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.015,
+   "ovrl": 3.141,
+   "language": [
+    "ja"
+   ],
+   "downloads": 3863,
+   "dur_s": 2.51
+  },
+  {
+   "id": "fosters/ivan-ptashnikau-lvy-output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.014,
+   "ovrl": 3.143,
+   "language": [
+    "be"
+   ],
+   "downloads": 34,
+   "dur_s": 12.92
+  },
+  {
+   "id": "aangelakis/STOMA",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.009,
+   "ovrl": 3.137,
+   "language": [
+    "el"
+   ],
+   "downloads": 745,
+   "dur_s": 2.74
+  },
+  {
+   "id": "fosters/ivan-navumenka-zhul-vern-output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.005,
+   "ovrl": 3.113,
+   "language": [
+    "be"
+   ],
+   "downloads": 38,
+   "dur_s": 13.27
+  },
+  {
+   "id": "fosters/taras_shau_chenka_vershy_paemy_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.003,
+   "ovrl": 3.089,
+   "language": [
+    "be"
+   ],
+   "downloads": 36,
+   "dur_s": 11.0
+  },
+  {
+   "id": "fosters/knihi-be-arlou_tancy_nad_horadam_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 4.003,
+   "ovrl": 3.264,
+   "language": [
+    "be"
+   ],
+   "downloads": 52,
+   "dur_s": 12.81
+  },
+  {
+   "id": "RikkaBotan/nyan-jenny-format",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.997,
+   "ovrl": 2.93,
+   "language": [
+    "ja"
+   ],
+   "downloads": 129,
+   "dur_s": 7.76
+  },
+  {
+   "id": "VSSA-SDSA/LT_Medical_S_corpus",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.995,
+   "ovrl": 3.205,
+   "language": [
+    "lt"
+   ],
+   "downloads": 756,
+   "dur_s": 37.59
+  },
+  {
+   "id": "Yehor/qirimtatar-tts",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.993,
+   "ovrl": 2.997,
+   "language": [
+    "crh"
+   ],
+   "downloads": 5,
+   "dur_s": 5.15
+  },
+  {
+   "id": "fosters/ivan-ptashnikau-lvy_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.993,
+   "ovrl": 3.025,
+   "language": [
+    "be"
+   ],
+   "downloads": 32,
+   "dur_s": 10.88
+  },
+  {
+   "id": "ylacombe/google-tamil",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.991,
+   "ovrl": 2.929,
+   "language": [
+    "ta"
+   ],
+   "downloads": 76,
+   "dur_s": 5.77
+  },
+  {
+   "id": "Vikhrmodels/ToneBooksPlus",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.989,
+   "ovrl": 2.915,
+   "language": [
+    "ru"
+   ],
+   "downloads": 409,
+   "dur_s": 4.69
+  },
+  {
+   "id": "ylacombe/english_dialects",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.987,
+   "ovrl": 3.223,
+   "language": [
+    "en"
+   ],
+   "downloads": 811,
+   "dur_s": 6.78
+  },
+  {
+   "id": "OmarAhmedSobhy/egyption-with-emotion-dataset",
+   "audio_col": "audio_player",
+   "mode_sr": 48000,
+   "bak": 3.985,
+   "ovrl": 3.235,
+   "language": [
+    "ar"
+   ],
+   "downloads": 104,
+   "dur_s": 5.29
+  },
+  {
+   "id": "fosters/knihi-be-arlou_tancy_nad_horadam_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.985,
+   "ovrl": 3.301,
+   "language": [
+    "be"
+   ],
+   "downloads": 30,
+   "dur_s": 18.72
+  },
+  {
+   "id": "fosters/stefan_tsvei_g_nyabachnaya_kalektsyya_output_original",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.984,
+   "ovrl": 3.038,
+   "language": [
+    "be"
+   ],
+   "downloads": 43,
+   "dur_s": 10.66
+  },
+  {
+   "id": "SPRINGLab/IndicVoices-R_Hindi",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.976,
+   "ovrl": 3.141,
+   "language": [
+    "hi"
+   ],
+   "downloads": 180,
+   "dur_s": 10.26
+  },
+  {
+   "id": "hypaai/Hypa-Speech-10k",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.964,
+   "ovrl": 2.892,
+   "language": [
+    "en",
+    "fr",
+    "es",
+    "ar",
+    "sw",
+    "ha",
+    "ig",
+    "yo",
+    "ann",
+    "efi",
+    "ego",
+    "ibb",
+    "idu",
+    "igl",
+    "nup",
+    "pcm",
+    "tiv",
+    "urh"
+   ],
+   "downloads": 80,
+   "dur_s": 15.08
+  },
+  {
+   "id": "vrclc/openslr63",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.952,
+   "ovrl": 3.059,
+   "language": [
+    "ml"
+   ],
+   "downloads": 28,
+   "dur_s": 4.23
+  },
+  {
+   "id": "Trelis/multimed-hard",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.94,
+   "ovrl": 3.13,
+   "language": [
+    "en"
+   ],
+   "downloads": 33,
+   "dur_s": 11.59
+  },
+  {
+   "id": "soketlabs/CoSHE-Eval",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.938,
+   "ovrl": 3.163,
+   "language": [
+    "hi",
+    "en"
+   ],
+   "downloads": 104,
+   "dur_s": 51.28
+  },
+  {
+   "id": "jspaulsen/vctk",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.925,
+   "ovrl": 3.047,
+   "language": [
+    "en"
+   ],
+   "downloads": 460,
+   "dur_s": 2.18
+  },
+  {
+   "id": "TutlaytAI/Kabyle_ASR-Fr_Translation",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.906,
+   "ovrl": 2.966,
+   "language": [
+    "kab",
+    "fr"
+   ],
+   "downloads": 7,
+   "dur_s": 1.68
+  },
+  {
+   "id": "intelsense/indicvoices-bengali",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.895,
+   "ovrl": 3.072,
+   "language": [
+    "bn"
+   ],
+   "downloads": 20,
+   "dur_s": 9.68
+  },
+  {
+   "id": "Kppwdfgu1/Hypa-Speech-10k",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.888,
+   "ovrl": 3.094,
+   "language": [
+    "en",
+    "fr",
+    "es",
+    "ar",
+    "sw",
+    "ha",
+    "ig",
+    "yo",
+    "ann",
+    "efi",
+    "ego",
+    "ibb",
+    "idu",
+    "igl",
+    "nup",
+    "pcm",
+    "tiv",
+    "urh"
+   ],
+   "downloads": 37,
+   "dur_s": 11.96
+  },
+  {
+   "id": "deepdml/igbo-dict-16khz",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.888,
+   "ovrl": 3.122,
+   "language": [
+    "ig",
+    "en"
+   ],
+   "downloads": 19,
+   "dur_s": 3.47
+  },
+  {
+   "id": "voice-biomarkers/openslr-32-hq-SA-languages-Afrikaans",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.886,
+   "ovrl": 3.051,
+   "language": [
+    "af"
+   ],
+   "downloads": 30,
+   "dur_s": 4.33
+  },
+  {
+   "id": "anzorq/kbd_speech",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.856,
+   "ovrl": 2.986,
+   "language": [
+    "kbd"
+   ],
+   "downloads": 47,
+   "dur_s": 1.85
+  },
+  {
+   "id": "Cnam-LMSSC/vibravox_enhanced_by_EBEN",
+   "audio_col": "audio.headset_microphone",
+   "mode_sr": 48000,
+   "bak": 3.849,
+   "ovrl": 3.216,
+   "language": [
+    "fr"
+   ],
+   "downloads": 32,
+   "dur_s": 4.5
+  },
+  {
+   "id": "vsisik/voice-dataset-lili",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.847,
+   "ovrl": 3.025,
+   "language": [
+    "sk"
+   ],
+   "downloads": 62,
+   "dur_s": 9.39
+  },
+  {
+   "id": "b1n1yam/waxal-orm-tts-merged",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.841,
+   "ovrl": 2.796,
+   "language": [
+    "orm"
+   ],
+   "downloads": 715,
+   "dur_s": 18.54
+  },
+  {
+   "id": "speech-uk/opentts-kateryna",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.812,
+   "ovrl": 2.838,
+   "language": [
+    "uk"
+   ],
+   "downloads": 79,
+   "dur_s": 6.85
+  },
+  {
+   "id": "maikezu/dowis",
+   "audio_col": "audio_prompt_female_1",
+   "mode_sr": 48000,
+   "bak": 3.811,
+   "ovrl": 3.006,
+   "language": [
+    "de",
+    "en",
+    "es",
+    "cs",
+    "fr",
+    "hu",
+    "it",
+    "nl",
+    "pt",
+    "ru",
+    "sq",
+    "sv"
+   ],
+   "downloads": 1314,
+   "dur_s": 4.57
+  },
+  {
+   "id": "Cnam-LMSSC/common_voice_13_french_phoneme",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.81,
+   "ovrl": 2.996,
+   "language": [
+    "fr"
+   ],
+   "downloads": 457,
+   "dur_s": 5.43
+  },
+  {
+   "id": "POISONX/Y",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.809,
+   "ovrl": 2.795,
+   "language": [
+    "ja"
+   ],
+   "downloads": 200,
+   "dur_s": 8.79
+  },
+  {
+   "id": "fosters/iakub-kolas-kazki-zhytstsia_all",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.809,
+   "ovrl": 2.985,
+   "language": [
+    "be"
+   ],
+   "downloads": 37,
+   "dur_s": 15.2
+  },
+  {
+   "id": "mythicinfinity/librispeech-pc-44khz-opus",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.806,
+   "ovrl": 3.135,
+   "language": [
+    "en"
+   ],
+   "downloads": 3996,
+   "dur_s": 7.86
+  },
+  {
+   "id": "yasalma/tat_hackathon_asr",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.806,
+   "ovrl": 3.066,
+   "language": [
+    "tt"
+   ],
+   "downloads": 123,
+   "dur_s": 5.17
+  },
+  {
+   "id": "hanamizuki-ai/genshin-voice-v3.3-mandarin",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.803,
+   "ovrl": 2.888,
+   "language": [
+    "zh"
+   ],
+   "downloads": 1471,
+   "dur_s": 0.7
+  },
+  {
+   "id": "Lindarychwalski/pony-speech",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.796,
+   "ovrl": 2.801,
+   "language": [
+    "en"
+   ],
+   "downloads": 198,
+   "dur_s": 2.39
+  },
+  {
+   "id": "cagataydev/vlm-voice-audio",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.795,
+   "ovrl": 2.646,
+   "language": [
+    "en"
+   ],
+   "downloads": 44,
+   "dur_s": 2.15
+  },
+  {
+   "id": "DataStudio/Vietnamese_ASR_TestingData_Old",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.793,
+   "ovrl": 2.715,
+   "language": [
+    "vi"
+   ],
+   "downloads": 3,
+   "dur_s": 14.39
+  },
+  {
+   "id": "hezarai/common-voice-13-fa",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.782,
+   "ovrl": 2.942,
+   "language": [
+    "fa"
+   ],
+   "downloads": 192,
+   "dur_s": 4.31
+  },
+  {
+   "id": "hosein-m/french_homophone_asr",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.779,
+   "ovrl": 2.853,
+   "language": [
+    "fr"
+   ],
+   "downloads": 51,
+   "dur_s": 5.99
+  },
+  {
+   "id": "DDD-Cambodia/khm-asr-cultural",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.771,
+   "ovrl": 3.026,
+   "language": [
+    "km"
+   ],
+   "downloads": 901,
+   "dur_s": 7.51
+  },
+  {
+   "id": "lyhourt-FSA/khm-asr-cultural",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.771,
+   "ovrl": 3.026,
+   "language": [
+    "km"
+   ],
+   "downloads": 409,
+   "dur_s": 8.29
+  },
+  {
+   "id": "joujiboi/kuroyukihime-speech",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.77,
+   "ovrl": 2.843,
+   "language": [
+    "ja"
+   ],
+   "downloads": 34,
+   "dur_s": 4.96
+  },
+  {
+   "id": "sdcsdccdsd/CSEMOTIONS",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.758,
+   "ovrl": 2.791,
+   "language": [
+    "zh"
+   ],
+   "downloads": 140,
+   "dur_s": 10.35
+  },
+  {
+   "id": "igidn/wuwa-voice-EN",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.75,
+   "ovrl": 2.844,
+   "language": [
+    "en"
+   ],
+   "downloads": 126,
+   "dur_s": 5.86
+  },
+  {
+   "id": "CraneAILabs/waxal-lug-clean",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.748,
+   "ovrl": 2.877,
+   "language": [
+    "lug"
+   ],
+   "downloads": 354,
+   "dur_s": 41.72
+  },
+  {
+   "id": "MohamedRashad/common-voice-18-arabic",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.745,
+   "ovrl": 2.934,
+   "language": [
+    "ar"
+   ],
+   "downloads": 364,
+   "dur_s": 4.44
+  },
+  {
+   "id": "OmarAhmedSobhy/tts-egyption-dataset",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.745,
+   "ovrl": 2.846,
+   "language": [
+    "ar"
+   ],
+   "downloads": 47,
+   "dur_s": 5.24
+  },
+  {
+   "id": "ahmadafaneh/common-voice-18-arabic",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.745,
+   "ovrl": 2.934,
+   "language": [
+    "ar"
+   ],
+   "downloads": 54,
+   "dur_s": 4.44
+  },
+  {
+   "id": "Codyfederer/tetttttt",
+   "audio_col": "audio",
+   "mode_sr": 44100,
+   "bak": 3.738,
+   "ovrl": 2.94,
+   "language": [
+    "tr"
+   ],
+   "downloads": 7,
+   "dur_s": 5.17
+  },
+  {
+   "id": "masuidrive/cv-corpus-17.0-zh-TW-client_id-grouped",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.731,
+   "ovrl": 3.043,
+   "language": [
+    "zh"
+   ],
+   "downloads": 70,
+   "dur_s": 3.44
+  },
+  {
+   "id": "hypaai/Hypa_Fleurs",
+   "audio_col": "english_audio",
+   "mode_sr": 48000,
+   "bak": 3.707,
+   "ovrl": 2.853,
+   "language": [
+    "en",
+    "ig",
+    "yo",
+    "ha"
+   ],
+   "downloads": 105,
+   "dur_s": 7.87
+  },
+  {
+   "id": "synthbot/pony-speech",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.697,
+   "ovrl": 2.63,
+   "language": [
+    "en"
+   ],
+   "downloads": 977,
+   "dur_s": 2.39
+  },
+  {
+   "id": "AIDC-AI/CSEMOTIONS",
+   "audio_col": "audio",
+   "mode_sr": 48000,
+   "bak": 3.661,
+   "ovrl": 2.699,
+   "language": [
+    "zh"
+   ],
+   "downloads": 1129,
+   "dur_s": 10.35
+  }
+ ]
+}
