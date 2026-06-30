@@ -23,7 +23,7 @@ LR=${LR:-2e-5}
 NUM_WORKERS=${NUM_WORKERS:-8}
 EARS_SPEAKERS=${EARS_SPEAKERS:-30}
 # clean_extra = DNSMOS-filtered ≥44k HF datasets (clean_teacher_datasets.json), top-N cleanest.
-SOURCES=${SOURCES:-ears,expresso_read,expresso_conv,clean_extra}
+SOURCES=${SOURCES:-ears,expresso_read,expresso_conv,clean_extra,sidon_teachers,bibletts}
 CLEAN_TOPN=${CLEAN_TOPN:-60}
 CLEAN_MAX_CLIPS=${CLEAN_MAX_CLIPS:-1500}
 mkdir -p /data /hf_cache "$REPO/fe_callcentre"

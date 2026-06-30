@@ -99,20 +99,31 @@ def export_hf(name: str, out_root: Path, token) -> None:
     log(f"[done] {name}: {n} wavs -> {d}")
 
 
-def _open_stream(repo: str, token):
-    """Open an HF dataset in streaming mode, discovering config + split robustly."""
+def _open_stream(repo: str, token, config=None, split=None):
+    """Open an HF dataset in streaming mode. Uses explicit config/split when given,
+    else discovers them; falls back to discovery if an explicit choice fails."""
     from datasets import load_dataset, get_dataset_config_names, get_dataset_split_names
+
+    def _discover():
+        try:
+            cfgs = get_dataset_config_names(repo, token=token)
+        except Exception:  # noqa: BLE001
+            cfgs = []
+        c = config if config is not None else (cfgs[0] if cfgs else None)
+        try:
+            sp = get_dataset_split_names(repo, c, token=token) if c else get_dataset_split_names(repo, token=token)
+        except Exception:  # noqa: BLE001
+            sp = []
+        s = split if split is not None else ("train" if "train" in sp else (sp[0] if sp else "train"))
+        return c, s
+
+    c, s = _discover()
     try:
-        cfgs = get_dataset_config_names(repo, token=token)
-    except Exception:  # noqa: BLE001
-        cfgs = []
-    cfg = cfgs[0] if cfgs else None
-    try:
-        splits = get_dataset_split_names(repo, cfg, token=token) if cfg else get_dataset_split_names(repo, token=token)
-    except Exception:  # noqa: BLE001
-        splits = []
-    split = "train" if "train" in splits else (splits[0] if splits else "train")
-    return load_dataset(repo, cfg, split=split, streaming=True, token=token), cfg, split
+        return load_dataset(repo, c, split=s, streaming=True, token=token), c, s
+    except Exception:  # noqa: BLE001 — explicit config/split bad -> rediscover from scratch
+        config = split = None
+        c, s = _discover()
+        return load_dataset(repo, c, split=s, streaming=True, token=token), c, s
 
 
 def _row_audio(a):
@@ -137,13 +148,14 @@ def export_hf_clean(entry: dict, out_root: Path, token, max_clips: int, min_sr: 
     repo = entry["id"]
     col = entry.get("audio_col") or "audio"
     safe = re.sub(r"[^A-Za-z0-9._-]", "__", repo)
-    d = out_root / "extra" / safe
+    tag = entry.get("tag") or safe
+    d = out_root / entry.get("subroot", "extra") / tag
     if (d / ".done").exists():
         log(f"[skip] {repo} done ({d})"); return 0
     d.mkdir(parents=True, exist_ok=True)
     try:
         from datasets import Audio
-        ds, cfg, split = _open_stream(repo, token)
+        ds, cfg, split = _open_stream(repo, token, entry.get("config"), entry.get("split"))
         feats = getattr(ds, "features", None) or {}
         if col not in feats:  # fall back to any Audio-typed column
             col = next((k for k, v in feats.items() if type(v).__name__ == "Audio"), col)
@@ -210,6 +222,62 @@ def download_clean_extra(out_root: Path, token, manifest: str, topn: int, max_cl
     log(f"[clean_extra] total {total} wavs from {len(rows)} datasets")
 
 
+# Sidon-paper clean teacher corpora (TRUSTED clean -> no DNSMOS filter). Several are
+# 24 kHz (libritts-r/fleurs-r/jvs) — fine for the 16 kHz FE; upsampled for the 48k
+# decoder (band-limited >12 kHz, accepted per the paper). VCTK excluded (not clean
+# enough, per user). Configs/splits are best-effort; _open_stream rediscovers on a
+# bad choice. Capped per entry to keep the corpus balanced + bounded.
+SIDON_TEACHERS = [
+    {"id": "mythicinfinity/libritts_r", "config": "clean", "split": "train.clean.100", "tag": "libritts_r_clean100", "max_clips": 4000},  # 24k en
+    {"id": "mythicinfinity/libritts_r", "config": "clean", "split": "train.clean.360", "tag": "libritts_r_clean360", "max_clips": 4000},  # 24k en
+    {"id": "PrincePK/jvs_ver1", "tag": "jvs", "max_clips": 4000},                                  # 24k ja
+    {"id": "japanese-asr/ja_asr.jsut_basic5000", "config": "default", "tag": "jsut", "max_clips": 5000},  # ja
+    {"id": "google/fleurs-r", "config": "en_us", "tag": "fleurs_r_en", "max_clips": 2500},         # 24k en
+    {"id": "google/fleurs-r", "config": "ja_jp", "tag": "fleurs_r_ja", "max_clips": 2000},
+    {"id": "google/fleurs-r", "config": "ms_my", "tag": "fleurs_r_ms", "max_clips": 2500},         # Malay!
+    {"id": "google/fleurs-r", "config": "cmn_hans_cn", "tag": "fleurs_r_zh", "max_clips": 2000},
+    {"id": "google/fleurs-r", "config": "ta_in", "tag": "fleurs_r_ta", "max_clips": 1500},         # Tamil
+    {"id": "google/fleurs-r", "config": "yo_ng", "tag": "fleurs_r_yo", "max_clips": 1500},
+]
+
+
+def download_sidon_teachers(out_root: Path, token, min_sr: int) -> None:
+    log(f"[sidon] {len(SIDON_TEACHERS)} teacher corpora (trusted clean, no DNSMOS; min_sr {min_sr})")
+    total = 0
+    for e in SIDON_TEACHERS:
+        e = dict(e); e["subroot"] = "sidon"
+        total += export_hf_clean(e, out_root, token, e.get("max_clips", 4000), min_sr=min_sr)
+    log(f"[sidon] total {total} wavs under {out_root}/sidon")
+
+
+# BibleTTS (OpenSLR SLR129): genuine 48 kHz/24-bit FLAC studio. Per-language tarballs;
+# open download (no token). Subset to keep disk bounded.
+BIBLETTS_BASE = "https://www.openslr.org/resources/129"
+BIBLETTS_LANGS = ["hausa", "yoruba"]
+
+
+def download_bibletts(out_root: Path, langs) -> None:
+    import tarfile
+    d = out_root / "sidon" / "bibletts"
+    if (d / ".done").exists():
+        log(f"[skip] bibletts done ({d})"); return
+    d.mkdir(parents=True, exist_ok=True)
+    for lang in langs:
+        url = f"{BIBLETTS_BASE}/{lang}.tar.gz"
+        tgz = d / f"{lang}.tar.gz"
+        log(f"[bibletts] {url}")
+        if subprocess.run(["curl", "-sSL", url, "-o", str(tgz)]).returncode != 0 or not tgz.exists():
+            log(f"[bibletts] WARNING download failed {lang}"); continue
+        try:
+            with tarfile.open(str(tgz)) as t:
+                t.extractall(str(d))
+        except Exception as e:  # noqa: BLE001
+            log(f"[bibletts] extract fail {lang}: {e}")
+        tgz.unlink(missing_ok=True)
+    (d / ".done").write_text("ok\n")
+    log(f"[done] bibletts -> {d}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="/data/clean48k")
@@ -220,6 +288,9 @@ def main() -> None:
     ap.add_argument("--clean-max-clips", type=int, default=1500, help="cap per dataset")
     ap.add_argument("--clean-min-sr", type=int, default=44000)
     ap.add_argument("--clean-shard", default="0/1", help="i/N strided slice for parallel downloads")
+    ap.add_argument("--sidon-min-sr", type=int, default=16000,
+                    help="min SR for sidon_teachers (24k corpora ok for the 16k FE)")
+    ap.add_argument("--bibletts-langs", default=",".join(BIBLETTS_LANGS))
     a = ap.parse_args()
     out = Path(a.out)
     if "/workspace" in str(out.resolve()):
@@ -234,6 +305,10 @@ def main() -> None:
         elif s == "clean_extra":
             download_clean_extra(out, token, a.clean_manifest, a.clean_topn, a.clean_max_clips,
                                  a.clean_min_sr, a.clean_shard)
+        elif s == "sidon_teachers":
+            download_sidon_teachers(out, token, a.sidon_min_sr)
+        elif s == "bibletts":
+            download_bibletts(out, [x.strip() for x in a.bibletts_langs.split(",") if x.strip()])
         else:
             log(f"[warn] unknown source {s}")
     total = sum(1 for _ in out.glob("**/*.wav"))

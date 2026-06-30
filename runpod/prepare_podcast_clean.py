@@ -98,8 +98,10 @@ def process_file(args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True)
-    ap.add_argument("--main", required=True)        # e.g. sg-podcast.zip
-    ap.add_argument("--patterns", required=True)    # e.g. "sg-podcast.z*,sg-podcast.zip"
+    ap.add_argument("--main", default="")           # split-zip main, e.g. sg-podcast.zip
+    ap.add_argument("--patterns", required=True)    # e.g. "sg-podcast.z*,sg-podcast.zip" or "part-*.zip"
+    ap.add_argument("--standalone", type=int, default=0,
+                    help="1 = patterns are independent zips (extract each fully); 0 = one split archive")
     ap.add_argument("--out", required=True)         # /data/clean48k/podcast_sg
     ap.add_argument("--work", default="/data/_pod")
     ap.add_argument("--max-hours", type=float, default=150.0)
@@ -127,12 +129,7 @@ def main():
     snapshot_download(repo_id=a.repo, repo_type="dataset", allow_patterns=pats,
                       local_dir=arch, token=tok, max_workers=16)
     sevenz = find_7z()
-    main = os.path.join(arch, a.main)
 
-    # 2. extract until ~max_hours of mp3 is on disk, then STOP (7z writes whole files
-    # in archive order, so we just kill it once enough is extracted). This bounds disk
-    # (the full archive is 70-126 GB) and avoids the unicode-listfile selective-extract
-    # bug. The zip is deleted immediately after to free space.
     def _dirbytes(d):
         t = 0
         for r, _, fs in os.walk(d):
@@ -144,19 +141,33 @@ def main():
         return t
 
     budget = int(a.max_hours * 60 * 1.3 * 1e6)   # mp3 ~1 MB/min, *1.3 safety
-    log(f"[7z] extracting up to ~{budget/1e9:.1f} GB (~{a.max_hours}h) from {a.main} ...")
-    p7 = subprocess.Popen([sevenz, "x", main, f"-o{ext}", "-y", "-mmt8"],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    while p7.poll() is None:
-        time.sleep(5)
-        if _dirbytes(ext) >= budget:
-            p7.terminate()
-            try:
-                p7.wait(timeout=30)
-            except Exception:  # noqa: BLE001
-                p7.kill()
-            break
-    shutil.rmtree(arch, ignore_errors=True)      # free the 70-126 GB zip now
+    if a.standalone:
+        # 2a. independent zips (e.g. movie part-*.zip): extract each fully (small),
+        # up to the budget.
+        zips = sorted(glob.glob(os.path.join(arch, "**", "*.zip"), recursive=True))
+        log(f"[7z] standalone: extracting {len(zips)} zips -> {ext}")
+        for z in zips:
+            if _dirbytes(ext) >= budget:
+                break
+            subprocess.run([sevenz, "x", z, f"-o{ext}", "-y", "-mmt8"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        # 2b. one split archive (70-126 GB): extract until ~budget then kill 7z (it
+        # writes whole files in order). Bounds disk + dodges the unicode-listfile bug.
+        main = os.path.join(arch, a.main)
+        log(f"[7z] extracting up to ~{budget/1e9:.1f} GB (~{a.max_hours}h) from {a.main} ...")
+        p7 = subprocess.Popen([sevenz, "x", main, f"-o{ext}", "-y", "-mmt8"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        while p7.poll() is None:
+            time.sleep(5)
+            if _dirbytes(ext) >= budget:
+                p7.terminate()
+                try:
+                    p7.wait(timeout=30)
+                except Exception:  # noqa: BLE001
+                    p7.kill()
+                break
+    shutil.rmtree(arch, ignore_errors=True)      # free the zip(s) now
 
     # 3. collect extracted mp3s (already ~budget; the last one may be partial -> ffmpeg
     # just skips undecodable ones)
