@@ -126,38 +126,44 @@ def main():
     sevenz = find_7z()
     main = os.path.join(arch, a.main)
 
-    # 2. extract the full archive (selective-by-listfile is fragile with the unicode
-    # YouTube filenames -> "Incorrect item in listfile"). Disk fits (<=126 GB).
-    log(f"[7z] extracting {a.main} -> {ext}")
-    rc = subprocess.run([sevenz, "x", main, f"-o{ext}", "-y", "-mmt8"]).returncode
-    if rc != 0:
-        log(f"[7z] WARNING rc={rc} (continuing with whatever extracted)")
-    shutil.rmtree(arch, ignore_errors=True)  # free the 70-126 GB zip
+    # 2. extract until ~max_hours of mp3 is on disk, then STOP (7z writes whole files
+    # in archive order, so we just kill it once enough is extracted). This bounds disk
+    # (the full archive is 70-126 GB) and avoids the unicode-listfile selective-extract
+    # bug. The zip is deleted immediately after to free space.
+    def _dirbytes(d):
+        t = 0
+        for r, _, fs in os.walk(d):
+            for f in fs:
+                try:
+                    t += os.path.getsize(os.path.join(r, f))
+                except Exception:  # noqa: BLE001
+                    pass
+        return t
 
-    # 3. pick a ~max_hours subset of the extracted mp3s by size (mp3 ~1 MB/min; *1.3
-    # safety), and delete the rest so disk stays bounded.
-    allmp3 = [p for p in glob.glob(os.path.join(ext, "**", "*"), recursive=True)
-              if p.lower().endswith(".mp3")]
-    random.Random(0).shuffle(allmp3)
-    budget = int(a.max_hours * 60 * 1.3 * 1e6)
-    sel, acc = [], 0
-    for p in allmp3:
-        if acc >= budget:
-            break
-        sel.append(p); acc += os.path.getsize(p)
-    selset = set(sel)
-    for p in allmp3:
-        if p not in selset:
+    budget = int(a.max_hours * 60 * 1.3 * 1e6)   # mp3 ~1 MB/min, *1.3 safety
+    log(f"[7z] extracting up to ~{budget/1e9:.1f} GB (~{a.max_hours}h) from {a.main} ...")
+    p7 = subprocess.Popen([sevenz, "x", main, f"-o{ext}", "-y", "-mmt8"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    while p7.poll() is None:
+        time.sleep(5)
+        if _dirbytes(ext) >= budget:
+            p7.terminate()
             try:
-                os.unlink(p)
+                p7.wait(timeout=30)
             except Exception:  # noqa: BLE001
-                pass
-    log(f"[sel] {len(sel)}/{len(allmp3)} mp3s (~{acc/1e9:.1f} GB ~{acc/1e6:.0f} min source budget)")
-    if not sel:
+                p7.kill()
+            break
+    shutil.rmtree(arch, ignore_errors=True)      # free the 70-126 GB zip now
+
+    # 3. collect extracted mp3s (already ~budget; the last one may be partial -> ffmpeg
+    # just skips undecodable ones)
+    mp3s = [p for p in glob.glob(os.path.join(ext, "**", "*"), recursive=True)
+            if p.lower().endswith(".mp3")]
+    log(f"[sel] extracted {len(mp3s)} mp3s (~{_dirbytes(ext)/1e9:.1f} GB)")
+    if not mp3s:
         raise SystemExit("no mp3 extracted")
 
     # 4. chunk + DNSMOS-filter each mp3 (parallel; mp3 deleted as processed)
-    mp3s = sel
     log(f"[proc] {len(mp3s)} mp3s -> chunk {a.chunk_s}s + DNSMOS bak>={a.bak_thr}")
     t0, done, kept_tot, seen_tot = time.time(), 0, 0, 0
     CHUNK = 64
