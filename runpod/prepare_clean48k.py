@@ -141,60 +141,118 @@ def _row_audio(a):
     return None, None
 
 
-def export_hf_clean(entry: dict, out_root: Path, token, max_clips: int, min_sr: int = 44000) -> int:
-    """Stream one clean HF dataset and write up to max_clips mono wavs (>= min_sr)."""
-    import soundfile as sf
+def _find_audio_col(schema):
+    """Audio column in a parquet schema: a struct with bytes/path, else a known name."""
+    import pyarrow as pa
+    for f in schema:
+        if pa.types.is_struct(f.type):
+            names = {f.type.field(i).name for i in range(f.type.num_fields)}
+            if "bytes" in names or "path" in names:
+                return f.name
+    names = {"audio", "wav", "speech", "flac", "mp3", "file", "audio_path", "path", "filename"}
+    for f in schema:
+        if f.name.lower() in names:
+            return f.name
+    return None
+
+
+def export_hf_clean(entry: dict, out_root: Path, token, max_clips: int,
+                    min_sr: int = 44000, max_shards: int = 40) -> int:
+    """DOWNLOAD parquet shards (NOT streaming) and extract up to max_clips mono wavs
+    (>= min_sr). Shards are fetched one at a time and deleted after reading, so disk
+    stays bounded. Filters shards by config/split substring when given."""
     import numpy as np
+    import pyarrow.parquet as pq
+    import soundfile as sf
+    from huggingface_hub import HfApi, hf_hub_download
     repo = entry["id"]
-    col = entry.get("audio_col") or "audio"
-    safe = re.sub(r"[^A-Za-z0-9._-]", "__", repo)
-    tag = entry.get("tag") or safe
+    col = entry.get("audio_col")
+    tag = entry.get("tag") or re.sub(r"[^A-Za-z0-9._-]", "__", repo)
     d = out_root / entry.get("subroot", "extra") / tag
     if (d / ".done").exists():
         log(f"[skip] {repo} done ({d})"); return 0
     d.mkdir(parents=True, exist_ok=True)
+    cfg, split = entry.get("config"), entry.get("split")
     try:
-        from datasets import Audio
-        ds, cfg, split = _open_stream(repo, token, entry.get("config"), entry.get("split"))
-        feats = getattr(ds, "features", None) or {}
-        if col not in feats:  # fall back to any Audio-typed column
-            col = next((k for k, v in feats.items() if type(v).__name__ == "Audio"), col)
-        # decode=False -> raw bytes (we decode with soundfile); avoids the torchcodec
-        # dependency datasets>=5 needs for auto-decoding Audio features.
-        try:
-            ds = ds.cast_column(col, Audio(decode=False))
-        except Exception:  # noqa: BLE001 — not an Audio feature; _row_audio handles raw
-            pass
-        log(f"[clean] {repo} (cfg={cfg} split={split} col={col}) -> {d}")
+        files = HfApi(token=token).list_repo_files(repo, repo_type="dataset")
     except Exception as e:  # noqa: BLE001
-        log(f"[clean] {repo}: open failed: {type(e).__name__}: {str(e)[:120]}"); return 0
+        log(f"[clean] {repo}: list failed: {type(e).__name__}: {str(e)[:100]}"); return 0
+    pqs = [f for f in files if f.endswith(".parquet")]
+
+    def _match(f):
+        fl = f.lower()
+        if cfg and cfg.lower() not in fl and cfg.lower().replace("_", "") not in fl.replace("_", ""):
+            return False
+        if split:
+            s = split.lower()
+            if not any(v in fl for v in (s, s.replace(".", "_"), s.replace(".", "-"), s.split(".")[0])):
+                return False
+        return True
+
+    sel = sorted([f for f in pqs if _match(f)]) or sorted(pqs)
+    log(f"[clean] {repo} (cfg={cfg} split={split}): {len(sel)}/{len(pqs)} parquet shards -> {d}")
+    pqdir = d / "_pq"; pqdir.mkdir(exist_ok=True)
+    sel = sel[:max_shards]
+    from concurrent.futures import ThreadPoolExecutor
     n = 0
-    try:
-        for i, row in enumerate(ds):
-            if n >= max_clips:
-                break
-            try:
-                arr, sr = _row_audio(row.get(col))
-            except Exception:  # noqa: BLE001
-                continue
-            if arr is None or not sr or sr < min_sr:
-                continue
-            arr = np.asarray(arr, dtype="float32")
-            if arr.ndim > 1:
-                arr = arr.mean(axis=1)
-            if len(arr) < int(0.5 * sr) or not np.isfinite(arr).all():
-                continue
-            try:
-                sf.write(str(d / f"{i:07d}.wav"), arr, int(sr), subtype="PCM_16")
-                n += 1
-            except Exception:  # noqa: BLE001
-                continue
-            if n % 1000 == 0:
-                log(f"[clean] {repo}: {n}")
-    except Exception as e:  # noqa: BLE001
-        log(f"[clean] {repo}: stream error after {n}: {type(e).__name__}: {str(e)[:120]}")
+
+    def _dl(shard):
+        try:
+            return hf_hub_download(repo, shard, repo_type="dataset", token=token, local_dir=str(pqdir))
+        except Exception as e:  # noqa: BLE001
+            log(f"[clean] {repo} dl {shard}: {type(e).__name__}: {str(e)[:80]}"); return None
+
+    def _read(lp):
+        nonlocal n
+        try:
+            pf = pq.ParquetFile(lp)
+        except Exception:  # noqa: BLE001
+            return
+        ac = col or _find_audio_col(pf.schema_arrow)
+        if not ac:
+            return
+        try:
+            for b in pf.iter_batches(batch_size=128, columns=[ac]):
+                for v in b.column(ac).to_pylist():
+                    if n >= max_clips:
+                        return
+                    try:
+                        arr, sr = _row_audio(v)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if arr is None or not sr or sr < min_sr:
+                        continue
+                    arr = np.asarray(arr, dtype="float32")
+                    if arr.ndim > 1:
+                        arr = arr.mean(axis=1)
+                    if len(arr) < int(0.5 * sr) or not np.isfinite(arr).all():
+                        continue
+                    try:
+                        sf.write(str(d / f"{n:07d}.wav"), arr, int(sr), subtype="PCM_16"); n += 1
+                    except Exception:  # noqa: BLE001
+                        continue
+        except Exception as e:  # noqa: BLE001
+            log(f"[clean] {repo} read: {type(e).__name__}: {str(e)[:80]}")
+
+    # download DLW shards in parallel (I/O-bound), then read+delete -> bounded disk
+    DLW = 8
+    for i in range(0, len(sel), DLW):
+        if n >= max_clips:
+            break
+        with ThreadPoolExecutor(max_workers=DLW) as ex:
+            locs = list(ex.map(_dl, sel[i:i + DLW]))
+        for lp in locs:
+            if lp and n < max_clips:
+                _read(lp)
+            if lp:
+                try:
+                    os.remove(lp)
+                except Exception:  # noqa: BLE001
+                    pass
+        log(f"[clean] {repo}: {n} wavs ({min(i + DLW, len(sel))}/{len(sel)} shards)")
+    shutil.rmtree(pqdir, ignore_errors=True)
     (d / ".done").write_text(f"{n}\n")
-    log(f"[done] {repo}: {n} wavs -> {d}")
+    log(f"[done] {repo}: {n} wavs from {shards} shards -> {d}")
     return n
 
 

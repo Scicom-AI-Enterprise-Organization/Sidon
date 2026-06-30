@@ -6,6 +6,9 @@ set -u
 cd /Sidon
 set -a; [ -f /Sidon/.env ] && source /Sidon/.env; set +a
 export HF_HOME=/hf_cache HF_HUB_DISABLE_XET=1   # xet can leave broken pointers on upload
+# single-thread each worker's BLAS/numba/onnx (we parallelize across files) + cache JIT
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMBA_NUM_THREADS=1
+export NUMBA_CACHE_DIR=/data/.numba_cache; mkdir -p "$NUMBA_CACHE_DIR"
 PY=/Sidon/.venv_dnsmos/bin/python
 MAX_HOURS=${MAX_HOURS:-150}; BAK_THR=${BAK_THR:-3.644}; WORKERS=${WORKERS:-16}
 UP_REPO=${UP_REPO:-Scicom-intl/sidon-callcentre-podcast}   # clean chunks persist here (tar per podcast)

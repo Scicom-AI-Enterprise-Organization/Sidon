@@ -27,6 +27,13 @@ import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+# Single-thread each library BEFORE importing numpy/onnx/librosa: we parallelize across
+# FILES with ProcessPoolExecutor, so per-worker BLAS/numba/onnx threads only oversubscribe
+# (was load ~42 on 16 cores -> thrashing). Must be set before the imports below.
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "NUMBA_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
 import numpy as np
 import soundfile as sf
 
