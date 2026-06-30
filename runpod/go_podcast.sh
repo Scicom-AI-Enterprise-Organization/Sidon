@@ -5,7 +5,7 @@
 set -u
 cd /Sidon
 set -a; [ -f /Sidon/.env ] && source /Sidon/.env; set +a
-export HF_HOME=/hf_cache HF_HUB_DISABLE_XET=1   # xet can leave broken pointers on upload
+export HF_HOME=/hf_cache HF_XET_HIGH_PERFORMANCE=1   # xet backend = fast chunked download of the 70-126GB archives
 # single-thread each worker's BLAS/numba/onnx (we parallelize across files) + cache JIT
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMBA_NUM_THREADS=1
 export NUMBA_CACHE_DIR=/data/.numba_cache; mkdir -p "$NUMBA_CACHE_DIR"
