@@ -227,3 +227,5 @@ decoder_callcentre/
 
 # inference outputs
 audio/out/
+
+.vscode
