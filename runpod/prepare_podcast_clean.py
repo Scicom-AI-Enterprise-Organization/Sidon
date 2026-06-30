@@ -59,7 +59,7 @@ def decode_whole(src, sr=SR):
     fd, tmp = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
-        rc = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src),
+        rc = subprocess.run(["ffmpeg", "-threads", "1", "-v", "error", "-y", "-i", str(src),
                              "-ar", str(sr), "-ac", "1", "-c:a", "pcm_s16le", tmp]).returncode
         if rc != 0:
             return None
