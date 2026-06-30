@@ -107,6 +107,9 @@ def main():
     ap.add_argument("--bak-thr", type=float, default=3.644)
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--max-chunks-per-file", type=int, default=240)
+    ap.add_argument("--upload-repo", default="", help="HF dataset repo to tar+upload the clean chunks into")
+    ap.add_argument("--upload-name", default="", help="tar filename in the repo (default <out-basename>.tar)")
+    ap.add_argument("--free-after-upload", type=int, default=1, help="rm local chunks after upload (bound disk)")
     a = ap.parse_args()
     tok = os.environ.get("HF_TOKEN")
     os.makedirs(a.out, exist_ok=True)
@@ -185,6 +188,29 @@ def main():
     shutil.rmtree(a.work, ignore_errors=True)
     open(os.path.join(a.out, ".done"), "w").write(f"{kept_tot}\n")
     log(f"[done] {a.repo}: kept {kept_tot} clean chunks (~{kept_tot*a.chunk_s/3600:.1f}h) -> {a.out}")
+
+    # 5. tar + upload the clean chunks to HF so they persist (CPU pod is disposable),
+    # then free local space so the next podcast fits the 160 GB disk.
+    if a.upload_repo and kept_tot > 0:
+        from huggingface_hub import HfApi
+        tarname = a.upload_name or (os.path.basename(a.out.rstrip("/")) + ".tar")
+        tarp = os.path.join(os.path.dirname(a.out.rstrip("/")), tarname)
+        log(f"[upload] tar {a.out} -> {tarp}")
+        subprocess.run(["tar", "-cf", tarp, "-C", os.path.dirname(a.out.rstrip("/")),
+                        os.path.basename(a.out.rstrip("/"))])
+        api = HfApi(token=os.environ.get("HF_TOKEN"))
+        api.create_repo(repo_id=a.upload_repo, repo_type="dataset", exist_ok=True)
+        api.upload_file(path_or_fileobj=tarp, path_in_repo=tarname,
+                        repo_id=a.upload_repo, repo_type="dataset",
+                        commit_message=f"{tarname}: {kept_tot} clean chunks (~{kept_tot*a.chunk_s/3600:.1f}h) from {a.repo}")
+        log(f"[upload] -> {a.upload_repo}/{tarname}")
+        try:
+            os.unlink(tarp)
+        except Exception:  # noqa: BLE001
+            pass
+        if a.free_after_upload:
+            shutil.rmtree(a.out, ignore_errors=True)
+            log(f"[upload] freed local {a.out}")
 
 
 if __name__ == "__main__":
