@@ -116,8 +116,9 @@ def main():
     ap.add_argument("--bak-thr", type=float, default=3.644)
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--max-chunks-per-file", type=int, default=240)
-    ap.add_argument("--upload-repo", default="", help="HF dataset repo to tar+upload the clean chunks into")
-    ap.add_argument("--upload-name", default="", help="tar filename in the repo (default <out-basename>.tar)")
+    ap.add_argument("--upload-repo", default="", help="HF dataset repo to zip+upload the clean chunks into")
+    ap.add_argument("--upload-name", default="", help="zip-part prefix in the repo (default <out-basename>)")
+    ap.add_argument("--zip-part-gb", type=float, default=5.0, help="zip part size (GB) for HF upload")
     ap.add_argument("--free-after-upload", type=int, default=1, help="rm local chunks after upload (bound disk)")
     a = ap.parse_args()
     tok = os.environ.get("HF_TOKEN")
@@ -207,25 +208,48 @@ def main():
     open(os.path.join(a.out, ".done"), "w").write(f"{kept_tot}\n")
     log(f"[done] {a.repo}: kept {kept_tot} clean chunks (~{kept_tot*a.chunk_s/3600:.1f}h) -> {a.out}")
 
-    # 5. tar + upload the clean chunks to HF so they persist (CPU pod is disposable),
-    # then free local space so the next podcast fits the 160 GB disk.
+    # 5. zip the clean chunks into <= zip_part_gb parts (zipfile DEFLATE, per the
+    # huseinzol05 upload-audio gist) and upload each part to HF, then free local disk.
     if a.upload_repo and kept_tot > 0:
+        import zipfile
         from huggingface_hub import HfApi
-        tarname = a.upload_name or (os.path.basename(a.out.rstrip("/")) + ".tar")
-        tarp = os.path.join(os.path.dirname(a.out.rstrip("/")), tarname)
-        log(f"[upload] tar {a.out} -> {tarp}")
-        subprocess.run(["tar", "-cf", tarp, "-C", os.path.dirname(a.out.rstrip("/")),
-                        os.path.basename(a.out.rstrip("/"))])
+        prefix = a.upload_name or os.path.basename(a.out.rstrip("/"))
+        parent = os.path.dirname(a.out.rstrip("/"))
         api = HfApi(token=os.environ.get("HF_TOKEN"))
         api.create_repo(repo_id=a.upload_repo, repo_type="dataset", exist_ok=True)
-        api.upload_file(path_or_fileobj=tarp, path_in_repo=tarname,
-                        repo_id=a.upload_repo, repo_type="dataset",
-                        commit_message=f"{tarname}: {kept_tot} clean chunks (~{kept_tot*a.chunk_s/3600:.1f}h) from {a.repo}")
-        log(f"[upload] -> {a.upload_repo}/{tarname}")
-        try:
-            os.unlink(tarp)
-        except Exception:  # noqa: BLE001
-            pass
+        wavs = sorted(glob.glob(os.path.join(a.out, "*.wav")))
+        part_bytes = int(a.zip_part_gb * 1e9)
+        temp, acc, pi = [], 0, 0
+
+        def _flush():
+            nonlocal temp, acc, pi
+            if not temp:
+                return
+            part = f"{prefix}_{pi:03d}.zip"
+            pp = os.path.join(parent, part)
+            with zipfile.ZipFile(pp, "w", zipfile.ZIP_DEFLATED) as z:
+                for f in temp:
+                    z.write(f, arcname=os.path.basename(f))
+            for attempt in range(6):
+                try:
+                    api.upload_file(path_or_fileobj=pp, path_in_repo=part, repo_id=a.upload_repo,
+                                    repo_type="dataset", commit_message=f"{part}: {len(temp)} clean chunks")
+                    break
+                except Exception as e:  # noqa: BLE001
+                    log(f"[upload] {part} retry {attempt}: {str(e)[:90]}"); time.sleep(60)
+            log(f"[upload] -> {a.upload_repo}/{part} ({len(temp)} files)")
+            try:
+                os.remove(pp)
+            except Exception:  # noqa: BLE001
+                pass
+            temp, acc, pi = [], 0, pi + 1
+
+        for f in wavs:
+            s = os.path.getsize(f)
+            if acc + s > part_bytes and temp:
+                _flush()
+            temp.append(f); acc += s
+        _flush()
         if a.free_after_upload:
             shutil.rmtree(a.out, ignore_errors=True)
             log(f"[upload] freed local {a.out}")

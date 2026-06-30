@@ -19,13 +19,13 @@ UP_REPO=${UP_REPO:-Scicom-intl/sidon-callcentre-podcast}   # clean chunks persis
     --main sg-podcast.zip --patterns "sg-podcast.z*,sg-podcast.zip" \
     --out /data/clean48k/podcast_sg --work /data/_pod_sg \
     --max-hours "$MAX_HOURS" --bak-thr "$BAK_THR" --workers "$WORKERS" \
-    --upload-repo "$UP_REPO" --upload-name podcast_sg.tar
+    --upload-repo "$UP_REPO" --upload-name podcast_sg
 
 "$PY" runpod/prepare_podcast_clean.py --repo malaysia-ai/malaysian-podcast-youtube \
     --main malaysian-podcast.zip --patterns "malaysian-podcast.z*,malaysian-podcast.zip" \
     --out /data/clean48k/podcast_my --work /data/_pod_my \
     --max-hours "$MAX_HOURS" --bak-thr "$BAK_THR" --workers "$WORKERS" \
-    --upload-repo "$UP_REPO" --upload-name podcast_my.tar
+    --upload-repo "$UP_REPO" --upload-name podcast_my
 
 # Malaysian movie (YouTube, variable quality) — same strict DNSMOS prep. Standalone
 # part-*.zip (independent zips, not a split archive). Small (~1.8 GB).
@@ -33,6 +33,6 @@ UP_REPO=${UP_REPO:-Scicom-intl/sidon-callcentre-podcast}   # clean chunks persis
     --patterns "part-*.zip" --standalone 1 \
     --out /data/clean48k/movie_my --work /data/_pod_movie \
     --max-hours "$MAX_HOURS" --bak-thr "$BAK_THR" --workers "$WORKERS" \
-    --upload-repo "$UP_REPO" --upload-name movie_my.tar
+    --upload-repo "$UP_REPO" --upload-name movie_my
 
 echo "PODCAST_ALL_DONE"
